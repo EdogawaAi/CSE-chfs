@@ -1,0 +1,2 @@
+Start to hook fuse
+Unimplemented function of chfs: ChfsResult<chfs::inode_id_t> chfs::FileOperation::alloc_inode(chfs::InodeType) at /home/stu/chfs/src/filesystem/data_op.cc:17
