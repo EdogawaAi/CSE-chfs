@@ -8,7 +8,7 @@ namespace chfs {
 /**
  * Some helper functions
  */
-auto string_to_inode_id(std::string &data) -> inode_id_t {
+auto string_to_inode_id(const std::string &data) -> inode_id_t {
   std::stringstream ss(data);
   inode_id_t inode;
   ss >> inode;
@@ -42,7 +42,8 @@ auto append_to_directory(std::string src, std::string filename, inode_id_t id)
 
   // TODO: Implement this function.
   //       Append the new directory entry to `src`.
-  UNIMPLEMENTED();
+  // UNIMPLEMENTED();
+  src += ("/" + filename + ":" + std::to_string(id));
   
   return src;
 }
@@ -51,20 +52,48 @@ auto append_to_directory(std::string src, std::string filename, inode_id_t id)
 void parse_directory(std::string &src, std::list<DirectoryEntry> &list) {
 
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+  // UNIMPLEMENTED();
+  std::stringstream ss(src);
+  std::string entry;
+
+  while (getline(ss, entry, '/'))
+  {
+    auto delimiter = entry.find(':');
+    if (delimiter != std::string::npos)
+    {
+      std::string name = entry.substr(0, delimiter);
+      inode_id_t id = string_to_inode_id(entry.substr(delimiter + 1));
+      list.push_back({name, id});
+    }
+  }
 
 }
 
 // {Your code here}
 auto rm_from_directory(std::string src, std::string filename) -> std::string {
 
-  auto res = std::string("");
+  // auto res = std::string("");
 
   // TODO: Implement this function.
   //       Remove the directory entry from `src`.
-  UNIMPLEMENTED();
+  // UNIMPLEMENTED();
+  std::stringstream ss(src);
+  std::string entry;
+  std::string result;
 
-  return res;
+  while (getline(ss, entry, '/'))
+  {
+    if (entry.substr(0, entry.find(":")) != filename)
+    {
+      if (!result.empty())
+      {
+        result += '/';
+      }
+      result += entry;
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -74,7 +103,16 @@ auto read_directory(FileOperation *fs, inode_id_t id,
                     std::list<DirectoryEntry> &list) -> ChfsNullResult {
   
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+  // UNIMPLEMENTED();
+  auto read_result = fs->read_file(id);
+  if (read_result.is_err())
+  {
+    return ChfsNullResult(read_result.unwrap_error());
+  }
+
+  auto data = read_result.unwrap();
+  auto data_str = std::string(data.begin(), data.end());
+  parse_directory(data_str, list);
 
   return KNullOk;
 }
