@@ -11,17 +11,18 @@ auto FileOperation::alloc_inode(InodeType type) -> ChfsResult<inode_id_t> {
 
   // TODO:
   // 1. Allocate a block for the inode.
-  auto new_block = this->block_allocator_->allocate();
-  if (new_block.is_err())
+  auto block_allocation_inode = this->block_allocator_->allocate();
+  if (block_allocation_inode.is_err())
     return ChfsResult<inode_id_t>(ErrorType::OUT_OF_RESOURCE);
+  auto bid = block_allocation_inode.unwrap();
   // 2. Allocate an inode.
-  auto new_inode = this->inode_manager_->allocate_inode(type, new_block.unwrap());
-  if (new_inode.is_err())
+  auto allocation_inode = this->inode_manager_->allocate_inode(type, bid);
+  if (allocation_inode.is_err())
     return ChfsResult<inode_id_t>(ErrorType::OUT_OF_RESOURCE);
   // 3. Initialize the inode block
   //    and write the block back to block manager.
   // UNIMPLEMENTED();
-  inode_id_t id_ = new_inode.unwrap();
+  inode_id_t id_ = allocation_inode.unwrap();
 
   return ChfsResult<inode_id_t>(id_);
 }
