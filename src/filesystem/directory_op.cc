@@ -53,20 +53,19 @@ void parse_directory(std::string &src, std::list<DirectoryEntry> &list) {
 
   // TODO: Implement this function.
   // UNIMPLEMENTED();
-  std::stringstream ss(src);
+  list.clear();
+  std::istringstream iss(src);
   std::string entry;
 
-  while (getline(ss, entry, '/'))
+  while (getline(iss, entry, '/'))
   {
-    auto delimiter = entry.find(':');
-    if (delimiter != std::string::npos)
-    {
-      std::string name = entry.substr(0, delimiter);
-      inode_id_t id = string_to_inode_id(entry.substr(delimiter + 1));
-      list.push_back({name, id});
-    }
+    std::istringstream entry_iss(entry);
+    std::string name;
+    inode_id_t id;
+    // list.push_back(DirectoryEntry{name, id});
+    if (getline(entry_iss, name, ':') && (entry_iss >> id))
+      list.push_back(DirectoryEntry{name, id});
   }
-
 }
 
 // {Your code here}
@@ -77,22 +76,19 @@ auto rm_from_directory(std::string src, std::string filename) -> std::string {
   // TODO: Implement this function.
   //       Remove the directory entry from `src`.
   // UNIMPLEMENTED();
-  std::stringstream ss(src);
-  std::string entry;
   std::string result;
+  std::list<DirectoryEntry> list;
+  parse_directory(src, list);
 
-  while (getline(ss, entry, '/'))
+  while (!list.empty())
   {
-    if (entry.substr(0, entry.find(":")) != filename)
+    auto entry = list.front();
+    list.pop_front();
+    if (entry.name != filename)
     {
-      if (!result.empty())
-      {
-        result += '/';
-      }
-      result += entry;
+      result = append_to_directory(result, entry.name, entry.id);
     }
   }
-
   return result;
 }
 
