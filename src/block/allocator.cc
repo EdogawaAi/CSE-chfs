@@ -129,13 +129,11 @@ auto BlockAllocator::allocate() -> ChfsResult<block_id_t> {
       bitmap.set(res.value());
 
       // 2. Flush the changed bitmap block back to the block manager.
-      bm->write_block(i + this->bitmap_block_id, buffer.data());
+      bm->write_block(i + bitmap_block_id, buffer.data());
 
       // 3. Calculate the value of `retval`.
       // UNIMPLEMENTED();
-      block_id_t retval = static_cast<block_id_t>(
-        res.value() + i * bm->block_size() * KBitsPerByte
-      );
+      block_id_t retval = static_cast<block_id_t>(res.value() + i * bm->block_size() * KBitsPerByte);
 
       return ChfsResult<block_id_t>(retval);
     }
@@ -151,33 +149,26 @@ auto BlockAllocator::deallocate(block_id_t block_id) -> ChfsNullResult {
 
   // TODO: Implement this function.
   // 1. According to `block_id`, zero the bit in the bitmap.
-  auto res = BlockIterator::create(bm.get(), bitmap_block_id,
-    bitmap_block_cnt + bitmap_block_id);
-
-  if (res.is_err())
-  {
-    return res.unwrap_error();
-  }
-
-  auto res_iter = res.unwrap();
-  auto res_ = res_iter.next(block_id / KBitsPerByte);
-  if (res_.is_err()) {
-    return res_.unwrap_error();
-  }
-
-  Bitmap bitmap(res_iter.unsafe_get_value_ptr<u8>(), 1);
-
   // 2. Flush the changed bitmap block back to the block manager.
-  // 3. Return ChfsNullResult(ErrorType::INVALID_ARG) 
+  // 3. Return ChfsNullResult(ErrorType::INVALID_ARG)
   //    if you find `block_id` is invalid (e.g. already freed).
   // UNIMPLEMENTED();
-  if (!bitmap.check(block_id % KBitsPerByte))
+  const auto total_bits_per_block = bm->block_size() * KBitsPerByte;
+  auto bitmap_block_pos = block_id / total_bits_per_block;
+  auto pos_in_bitmap = block_id % total_bits_per_block;
+  std::vector<u8> buffer(bm->block_size());
+
+  // read the bitmap block
+  bm->read_block(bitmap_block_id + bitmap_block_pos, buffer.data());
+  Bitmap bitmap = Bitmap(buffer.data(), bm->block_size());
+  if (!bitmap.check(pos_in_bitmap))
   {
     return ChfsNullResult(ErrorType::INVALID_ARG);
   }
-  bitmap.clear(block_id % KBitsPerByte);
-
-  res_iter.flush_cur_block();
+  //1. zero the bit in the bitmap.
+  bitmap.clear(pos_in_bitmap);
+  //2. Flush the changed bitmap block back to the block manager.
+  bm->write_block(bitmap_block_id + bitmap_block_pos, buffer.data());
 
   return KNullOk;
 }
