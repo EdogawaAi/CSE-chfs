@@ -96,21 +96,14 @@ auto InodeManager::allocate_inode(InodeType type, block_id_t bid)
 
       // TODO:
       // 1. Initialize the inode with the given type.
-      auto new_inode = Inode(type, bm->block_size());
+      auto inode = Inode{type, bm->block_size()};
       std::vector<u8> buffer(bm->block_size());
-      new_inode.flush_to_buffer(buffer.data());
+      inode.flush_to_buffer(buffer.data());
       bm->write_block(bid, buffer.data());
-
-
       // 2. Setup the inode table.
-      auto inode_per_block = bm->block_size() / sizeof(block_id_t);
-      auto table_blocks = free_idx.value() / inode_per_block;
-      auto offset_ = free_idx.value() % inode_per_block;
-      bm->read_block(1 + table_blocks, buffer.data());
-      auto table_pointer = reinterpret_cast<block_id_t *>(buffer.data());
-      table_pointer[offset_] = bid;
-      bm->write_block(1 + table_blocks, buffer.data());
-
+      if (auto res = set_table(free_idx.value(), bid); res.is_err()) {
+        return ChfsResult<inode_id_t>(res.unwrap_error());
+      }
 
       // 3. Return the id of the allocated inode.
       //    You may have to use the `RAW_2_LOGIC` macro
@@ -131,13 +124,17 @@ auto InodeManager::set_table(inode_id_t idx, block_id_t bid) -> ChfsNullResult {
   // whose index is `idx`.
   // UNIMPLEMENTED();
   auto inode_per_block = bm->block_size() / sizeof(block_id_t);
-  auto table_block = idx / inode_per_block;
-  auto offset_ = idx % inode_per_block;
+  auto inode_table_block_id = idx / inode_per_block + 1;
+  // offset 是在这几个block中的第几个
+  auto inode_table_block_offset = idx % inode_per_block;
+
+
   std::vector<u8> buffer(bm->block_size());
-  bm->read_block(1 + table_block, buffer.data());
-  auto table_pointer = reinterpret_cast<block_id_t *>(buffer.data());
-  table_pointer[offset_] = bid;
-  bm->write_block(1 + table_block, buffer.data());
+  bm->read_block(inode_table_block_id, buffer.data());
+
+  auto table_ptr = reinterpret_cast<block_id_t *>(buffer.data());
+  table_ptr[inode_table_block_offset] = bid;
+  bm->write_block(inode_table_block_id, buffer.data());
 
   return KNullOk;
 }
@@ -152,14 +149,17 @@ auto InodeManager::get(inode_id_t id) -> ChfsResult<block_id_t> {
   // the macro `LOGIC_2_RAW` to get the inode
   // table index.
   // UNIMPLEMENTED();
-  auto raw_id = LOGIC_2_RAW(id);
+  auto inode_id_raw = LOGIC_2_RAW(id);
   auto inode_per_block = bm->block_size() / sizeof(block_id_t);
-  auto table_blocks = raw_id / inode_per_block;
-  auto offset_ = raw_id % inode_per_block;
+  auto inode_table_block_id = inode_id_raw / inode_per_block + 1;
+  // offset 是在这几个block中的第几个
+  auto inode_table_block_offset = inode_id_raw % inode_per_block;
+
   std::vector<u8> buffer(bm->block_size());
-  bm->read_block(1 + table_blocks, buffer.data());
-  auto table_pointer = reinterpret_cast<block_id_t *> (buffer.data());
-  res_block_id = table_pointer[offset_];
+  bm->read_block(inode_table_block_id, buffer.data());
+
+  auto table_ptr = reinterpret_cast<block_id_t *>(buffer.data());
+  res_block_id = table_ptr[inode_table_block_offset];
 
   return ChfsResult<block_id_t>(res_block_id);
 }
@@ -254,19 +254,21 @@ auto InodeManager::free_inode(inode_id_t id) -> ChfsNullResult {
   // 1. Clear the inode table entry.
   //    You may have to use macro `LOGIC_2_RAW`
   //    to get the index of inode table from `id`.
-  auto raw_id = LOGIC_2_RAW(id);
-  set_table(raw_id, 0);
+  auto inode_id_raw = LOGIC_2_RAW(id);
+  set_table(inode_id_raw, 0);
 
   // 2. Clear the inode bitmap.
   // UNIMPLEMENTED();
-  auto inode_bits_per_block = bm->block_size() / KBitsPerByte;
-  auto bitmap_block = raw_id / inode_bits_per_block;
-  auto offset_ = raw_id % inode_bits_per_block;
+  auto inode_bitap_start = 1 + n_table_blocks;
+  auto inode_bits_per_block = bm->block_size() * KBitsPerByte;
+  auto inode_table_block_offset = inode_id_raw % inode_bits_per_block;
+  auto bitmap_block_id = inode_id_raw / inode_bits_per_block;
+
   std::vector<u8> buffer(bm->block_size());
-  bm->read_block(1 + n_table_blocks + bitmap_block, buffer.data());
-  auto bitmap_ = Bitmap(buffer.data(), bm->block_size());
-  bitmap_.clear(offset_);
-  bm->write_block(1 + n_table_blocks + bitmap_block, buffer.data());
+  bm->read_block(inode_bitap_start + bitmap_block_id, buffer.data());
+  auto bitmap = Bitmap{buffer.data(), bm->block_size()};
+  bitmap.clear(inode_table_block_offset);
+  bm->write_block(inode_bitap_start + bitmap_block_id, buffer.data());
 
   return KNullOk;
 }
