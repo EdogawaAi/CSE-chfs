@@ -95,10 +95,6 @@ auto BlockManager::write_block(block_id_t block_id, const u8 *data)
   
 
   // TODO: Implement this function.
-<<<<<<< HEAD
-  UNIMPLEMENTED();
-  this->write_fail_cnt++;
-=======
   // UNIMPLEMENTED();
   if (block_id >= block_cnt)
   {
@@ -107,7 +103,7 @@ auto BlockManager::write_block(block_id_t block_id, const u8 *data)
 
   memcpy(block_data + block_id * block_sz, data, block_sz);
 
->>>>>>> lab1
+  this->write_fail_cnt++;
   return KNullOk;
 }
 
@@ -122,10 +118,8 @@ auto BlockManager::write_partial_block(block_id_t block_id, const u8 *data,
   }
 
   // TODO: Implement this function.
-<<<<<<< HEAD
-  UNIMPLEMENTED();
-  this->write_fail_cnt++;
-=======
+
+
   // UNIMPLEMENTED();
   if (block_id >= block_cnt || offset + len > this->block_sz)
   {
@@ -134,7 +128,7 @@ auto BlockManager::write_partial_block(block_id_t block_id, const u8 *data,
 
   memcpy(block_data + block_id * block_sz + offset, data, len);
 
->>>>>>> lab1
+  this->write_fail_cnt++;
   return KNullOk;
 }
 
