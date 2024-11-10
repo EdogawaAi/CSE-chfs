@@ -34,6 +34,7 @@ class FileOperation;
 class InodeManager {
   friend class FileOperation;
   // We will modify the block manager
+ friend  class MetadataServer; //不然用不了read_inode
   std::shared_ptr<BlockManager> bm;
   u64 max_inode_supported;
   u64 n_table_blocks;
