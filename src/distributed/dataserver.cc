@@ -59,15 +59,20 @@ auto DataServer::read_data(block_id_t block_id, usize offset, usize len,
                            version_t version) -> std::vector<u8> {
   // TODO: Implement this function.
   // UNIMPLEMENTED();
-  std::vector<u8> block_data(block_allocator_->bm->block_size());
-  block_allocator_->bm->read_block(block_id, block_data.data());
-
-  if (offset + len > block_data.size())
+ if (get_block_version(block_id) != version)
+ {
+   return {};
+ }
+  auto block_size = block_allocator_->bm->block_size();
+  if (offset + len > block_size)
   {
-    throw std::runtime_error("Read out of block boundary");
+    // throw std::runtime_error("Read out of block boundary");
+    return {};
   }
 
-  std::vector<u8> result(block_data.begin() + offset, block_data.begin() + offset + len);
+  std::vector<u8> buffer(block_size);
+  block_allocator_->bm->read_block(block_id, buffer.data());
+  std::vector<u8> result(buffer.begin() + offset, buffer.begin() + offset + len);
 
   return result;
 }
