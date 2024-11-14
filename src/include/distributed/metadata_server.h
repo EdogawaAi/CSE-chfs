@@ -16,6 +16,7 @@
 #include "librpc/client.h"
 #include "librpc/server.h"
 #include "metadata/manager.h"
+#include <mutex>
 #include "filesystem/operations.h"
 #include "distributed/commit_log.h"
 
@@ -245,6 +246,9 @@ private:
   /**
    * {You can add anything you want here}
    */
+  static constexpr usize LOCK_CNT = 64;
+  std::mutex inode_locks[LOCK_CNT];
+  std::mutex inode_table_lock;
 };
 
 } // namespace chfs

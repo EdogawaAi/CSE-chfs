@@ -125,6 +125,7 @@ auto MetadataServer::mknode(u8 type, inode_id_t parent, const std::string &name)
   // TODO: Implement this function.
   // UNIMPLEMENTED();
   auto block_size = operation_->block_manager_->block_size();
+  std::lock_guard parent_lock(inode_locks[parent % LOCK_CNT]);
   std::vector<u8> inode_vector(block_size);
   auto read_inode_res = operation_->inode_manager_->read_inode(parent, inode_vector);
   if (read_inode_res.is_err()) {
@@ -136,6 +137,7 @@ auto MetadataServer::mknode(u8 type, inode_id_t parent, const std::string &name)
     return 0;
   }
 
+  std::lock_guard table_lock(inode_table_lock);
   auto result = operation_->mk_helper(parent, name.c_str(),static_cast<InodeType>(type));
   if (result.is_ok())
   {
@@ -150,6 +152,8 @@ auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
     -> bool {
   // TODO: Implement this function.
   // UNIMPLEMENTED();
+  std::lock_guard parent_lock(inode_locks[parent % LOCK_CNT]);
+  std::lock_guard table_lock(inode_table_lock);
   auto result = operation_->unlink(parent, name.c_str());
   if (result.is_ok())
   {
@@ -164,6 +168,7 @@ auto MetadataServer::lookup(inode_id_t parent, const std::string &name)
     -> inode_id_t {
   // TODO: Implement this function.
   // UNIMPLEMENTED();
+  std::lock_guard parent_lock(inode_locks[parent % LOCK_CNT]);
   auto result = operation_->lookup(parent, name.c_str());
   if (result.is_ok())
   {
@@ -180,6 +185,7 @@ auto MetadataServer::get_block_map(inode_id_t id) -> std::vector<BlockInfo> {
   const auto block_size = operation_->block_manager_->block_size();
 
   std::vector<u8> block_info(operation_->block_manager_->block_size());
+  std::lock_guard inode_lock(inode_locks[id % LOCK_CNT]);
   auto resd_inode_result = operation_->inode_manager_->read_inode(id, block_info); //对 std::vector<u8> 类型的非 const 左值引用不能绑定到类型 BlockInfo* 的右值
   if (resd_inode_result.is_err())
   {
@@ -206,7 +212,7 @@ auto MetadataServer::allocate_block(inode_id_t id) -> BlockInfo {
   // TODO: Implement this function.
   // UNIMPLEMENTED();
   auto block_size = operation_->block_manager_->block_size();
-
+  std::lock_guard inode_lock(inode_locks[id % LOCK_CNT]);
   std::vector<u8> inode_vector(block_size);
   auto read_inode_result = operation_->inode_manager_->read_inode(id, inode_vector);
   if (read_inode_result.is_err())
@@ -250,82 +256,52 @@ auto MetadataServer::allocate_block(inode_id_t id) -> BlockInfo {
 // {Your code here}
 auto MetadataServer::free_block(inode_id_t id, block_id_t block_id,
                                 mac_id_t machine_id) -> bool {
-  // TODO: Implement this function.
-  // UNIMPLEMENTED();
-  auto block_size = operation_->block_manager_->block_size();
+  // read the inode and check if it is a file
+  const auto block_size = this->operation_->block_manager_->block_size();
+  std::vector<u8> inode_vec(block_size);
+  std::lock_guard inode_lock(inode_locks[id % LOCK_CNT]);
+  auto read_inode_res =
+      this->operation_->inode_manager_->read_inode(id, inode_vec);
+  if (read_inode_res.is_err()) return false;
+  auto inode_block_id = read_inode_res.unwrap();
+  Inode *inode_p = reinterpret_cast<Inode *>(inode_vec.data());
+  if (inode_p->get_type() != InodeType::FILE) return false;
 
-  // read inode
-  std::vector<u8> buffer(block_size);
-  auto inode_ptr = reinterpret_cast<Inode *>(buffer.data());
-  auto get_res = operation_->inode_manager_->get(id);
-
-  if (get_res.is_err())
-  {
-    return false;
-  }
-
-  auto inode_block_id = get_res.unwrap();
-  if (inode_block_id == KInvalidBlockID)
-  {
-    return false;
-  }
-  // find record
-  bool record = false;
-  uint32_t record_idx = 0;
-  for (uint32_t i = 0; i < inode_ptr->get_nblocks(); i += 2)
-  {
-    if (inode_ptr->blocks[i] == block_id && inode_ptr->blocks[i + 1] == machine_id)
-    {
-      record = true;
-      record_idx = i;
+  // find the block to free
+  BlockInfo *block_info_p = reinterpret_cast<BlockInfo *>(inode_p->blocks);
+  u32 block_idx_to_remove;
+  bool found = false;
+  auto file_size = inode_p->get_size();
+  auto block_num = file_size % block_size == 0 ? file_size / block_size
+                                               : file_size / block_size + 1;
+  for (u32 i = 0; i < block_num; i++) {
+    if (std::get<0>(block_info_p[i]) == block_id &&
+        std::get<1>(block_info_p[i]) == machine_id) {
+      block_idx_to_remove = i;
+      found = true;
       break;
     }
   }
-  if (!record)
-  {
-    return false;
-  }
 
-  auto iter = clients_.find(machine_id);
-  if (iter == clients_.end())
-  {
-    return false;
-  }
-  auto target_machine = iter->second;
-  auto response = target_machine->call("free_block", block_id);
-  if (response.is_err())
-  {
-    return false;
-  }
+  // call the data server to free the block
+  if (!found) return false;
+  auto rpc_res = this->clients_[machine_id]->call("free_block", block_id);
+  if (rpc_res.is_err()) return false;
+  auto rpc_ret = rpc_res.unwrap()->as<bool>();
+  if (!rpc_ret) return false;
 
-  auto is_success = response.unwrap()->as<bool>();
-  if (!is_success)
-  {
-    return false;
+  // remove the block from the inode and update attributes
+  for (u32 i = block_idx_to_remove; i < block_num - 1; i++) {
+    block_info_p[i] = block_info_p[i + 1];
   }
+  u64 new_file_size = file_size - block_size;
+  inode_p->inner_attr.size = new_file_size;
+  inode_p->inner_attr.ctime = inode_p->inner_attr.mtime = time(0);
 
-  // remove record from local inode block
-  for (uint32_t i = record_idx; i < inode_ptr->get_nblocks(); i += 2)
-  {
-    if (i + 3 >= inode_ptr->get_nblocks())
-    {
-      inode_ptr->blocks[i] = KInvalidBlockID;
-      inode_ptr->blocks[i + 1] = 0;
-    }
-    inode_ptr->blocks[i] = inode_ptr->blocks[i + 2];
-    inode_ptr->blocks[i + 1] = inode_ptr->blocks[i + 3];
-    if (inode_ptr->blocks[i] == KInvalidBlockID)
-    {
-      break;
-    }
-  }
-  
-  auto write_res = operation_->block_manager_->write_block(inode_block_id, buffer.data());
-  if (write_res.is_err())
-  {
-    return false;
-  }
-
+  // write back the inode
+  auto write_inode_res = this->operation_->block_manager_->write_block(
+      inode_block_id, inode_vec.data());
+  if (write_inode_res.is_err()) return false;
   return true;
 }
 
@@ -334,6 +310,7 @@ auto MetadataServer::readdir(inode_id_t node)
     -> std::vector<std::pair<std::string, inode_id_t>> {
   // TODO: Implement this function.
   // UNIMPLEMENTED();
+  std::lock_guard inode_lock(inode_locks[node % LOCK_CNT]);
   std::vector<std::pair<std::string, inode_id_t>> result;
   std::list<DirectoryEntry> list;
   read_directory(operation_.get(), node, list);
@@ -351,6 +328,7 @@ auto MetadataServer::get_type_attr(inode_id_t id)
     -> std::tuple<u64, u64, u64, u64, u8> {
   // TODO: Implement this function.
   // UNIMPLEMENTED();
+  std::lock_guard inode_lock(inode_locks[id % LOCK_CNT]);
   auto get_res = operation_->get_type_attr(id);
   if (get_res.is_err())
   {
