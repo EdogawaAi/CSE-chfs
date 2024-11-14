@@ -253,28 +253,115 @@ auto MetadataServer::free_block(inode_id_t id, block_id_t block_id,
   // TODO: Implement this function.
   // UNIMPLEMENTED();
   auto block_size = operation_->block_manager_->block_size();
-  std::vector<u8> inode_vector(block_size);
-  auto read_inode_result = operation_->inode_manager_->read_inode(id, inode_vector);
 
-  return false;
+  // read inode
+  std::vector<u8> buffer(block_size);
+  auto inode_ptr = reinterpret_cast<Inode *>(buffer.data());
+  auto get_res = operation_->inode_manager_->get(id);
+
+  if (get_res.is_err())
+  {
+    return false;
+  }
+
+  auto inode_block_id = get_res.unwrap();
+  if (inode_block_id == KInvalidBlockID)
+  {
+    return false;
+  }
+  // find record
+  bool record = false;
+  uint32_t record_idx = 0;
+  for (uint32_t i = 0; i < inode_ptr->get_nblocks(); i += 2)
+  {
+    if (inode_ptr->blocks[i] == block_id && inode_ptr->blocks[i + 1] == machine_id)
+    {
+      record = true;
+      record_idx = i;
+      break;
+    }
+  }
+  if (!record)
+  {
+    return false;
+  }
+
+  auto iter = clients_.find(machine_id);
+  if (iter == clients_.end())
+  {
+    return false;
+  }
+  auto target_machine = iter->second;
+  auto response = target_machine->call("free_block", block_id);
+  if (response.is_err())
+  {
+    return false;
+  }
+
+  auto is_success = response.unwrap()->as<bool>();
+  if (!is_success)
+  {
+    return false;
+  }
+
+  // remove record from local inode block
+  for (uint32_t i = record_idx; i < inode_ptr->get_nblocks(); i += 2)
+  {
+    if (i + 3 >= inode_ptr->get_nblocks())
+    {
+      inode_ptr->blocks[i] = KInvalidBlockID;
+      inode_ptr->blocks[i + 1] = 0;
+    }
+    inode_ptr->blocks[i] = inode_ptr->blocks[i + 2];
+    inode_ptr->blocks[i + 1] = inode_ptr->blocks[i + 3];
+    if (inode_ptr->blocks[i] == KInvalidBlockID)
+    {
+      break;
+    }
+  }
+  
+  auto write_res = operation_->block_manager_->write_block(inode_block_id, buffer.data());
+  if (write_res.is_err())
+  {
+    return false;
+  }
+
+  return true;
 }
 
 // {Your code here}
 auto MetadataServer::readdir(inode_id_t node)
     -> std::vector<std::pair<std::string, inode_id_t>> {
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+  // UNIMPLEMENTED();
+  std::vector<std::pair<std::string, inode_id_t>> result;
+  std::list<DirectoryEntry> list;
+  read_directory(operation_.get(), node, list);
 
-  return {};
+  for (auto iter = list.begin(); iter != list.end(); iter++)
+  {
+    result.push_back(std::make_pair(iter->name, iter->id));
+  }
+
+  return result;
 }
 
 // {Your code here}
 auto MetadataServer::get_type_attr(inode_id_t id)
     -> std::tuple<u64, u64, u64, u64, u8> {
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+  // UNIMPLEMENTED();
+  auto get_res = operation_->get_type_attr(id);
+  if (get_res.is_err())
+  {
+    return std::tuple<u64, u64, u64, u64, u8>(0, 0, 0, 0, 0);
+  }
 
-  return {};
+  auto pair = get_res.unwrap();
+  InodeType inode_type = pair.first;
+  FileAttr file_attr = pair.second;
+
+  return std::tuple<u64, u64, u64, u64, u8>(file_attr.size, file_attr.atime, file_attr.mtime, file_attr.ctime, static_cast<u8>(inode_type));
 }
 
 auto MetadataServer::reg_server(const std::string &address, u16 port,
