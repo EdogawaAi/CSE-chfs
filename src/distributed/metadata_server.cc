@@ -1,7 +1,9 @@
 #include "distributed/metadata_server.h"
+
+#include <fstream>
+
 #include "common/util.h"
 #include "filesystem/directory_op.h"
-#include <fstream>
 
 namespace chfs {
 
@@ -75,11 +77,10 @@ inline auto MetadataServer::init_fs(const std::string &data_path) {
 
   running = false;
   num_data_servers =
-      0; // Default no data server. Need to call `reg_server` to add.
+      0;  // Default no data server. Need to call `reg_server` to add.
 
   if (is_log_enabled_) {
-    if (may_failed_)
-      operation_->block_manager_->set_may_fail(true);
+    if (may_failed_) operation_->block_manager_->set_may_fail(true);
     commit_log = std::make_shared<CommitLog>(operation_->block_manager_,
                                              is_checkpoint_enabled_);
   }
@@ -95,7 +96,8 @@ inline auto MetadataServer::init_fs(const std::string &data_path) {
 MetadataServer::MetadataServer(u16 port, const std::string &data_path,
                                bool is_log_enabled, bool is_checkpoint_enabled,
                                bool may_failed)
-    : is_log_enabled_(is_log_enabled), may_failed_(may_failed),
+    : is_log_enabled_(is_log_enabled),
+      may_failed_(may_failed),
       is_checkpoint_enabled_(is_checkpoint_enabled) {
   server_ = std::make_unique<RpcServer>(port);
   init_fs(data_path);
@@ -109,7 +111,8 @@ MetadataServer::MetadataServer(std::string const &address, u16 port,
                                const std::string &data_path,
                                bool is_log_enabled, bool is_checkpoint_enabled,
                                bool may_failed)
-    : is_log_enabled_(is_log_enabled), may_failed_(may_failed),
+    : is_log_enabled_(is_log_enabled),
+      may_failed_(may_failed),
       is_checkpoint_enabled_(is_checkpoint_enabled) {
   server_ = std::make_unique<RpcServer>(address, port);
   init_fs(data_path);
@@ -122,86 +125,121 @@ MetadataServer::MetadataServer(std::string const &address, u16 port,
 // {Your code here}
 auto MetadataServer::mknode(u8 type, inode_id_t parent, const std::string &name)
     -> inode_id_t {
-  // TODO: Implement this function.
-  // UNIMPLEMENTED();
-  auto block_size = operation_->block_manager_->block_size();
+  // check if the inode is a directory
+  const auto block_size = this->operation_->block_manager_->block_size();
   std::lock_guard parent_lock(inode_locks[parent % LOCK_CNT]);
-  std::vector<u8> inode_vector(block_size);
-  auto read_inode_res = operation_->inode_manager_->read_inode(parent, inode_vector);
-  if (read_inode_res.is_err()) {
-    return 0;
-  }
+  std::vector<u8> inode_vec(block_size);
+  auto read_inode_res =
+      this->operation_->inode_manager_->read_inode(parent, inode_vec);
+  if (read_inode_res.is_err()) return {};
+  Inode *inode_p = reinterpret_cast<Inode *>(inode_vec.data());
+  if (inode_p->get_type() != InodeType::Directory) return 0;
 
-  Inode *inode_ptr = reinterpret_cast<Inode *>(inode_vector.data());
-  if (inode_ptr->get_type() != InodeType::Directory) {
-    return 0;
-  }
-
+  // call the mk_helper of FileOperation to do this
   std::lock_guard table_lock(inode_table_lock);
-  auto result = operation_->mk_helper(parent, name.c_str(),static_cast<InodeType>(type));
-  if (result.is_ok())
-  {
-    return result.unwrap();
+
+  std::vector<std::shared_ptr<BlockOperation>> op_vec;
+  if (is_log_enabled_) {
+    this->operation_->block_manager_->start_logging(&op_vec);
+  }
+  auto result = this->operation_->mk_helper(parent, name.c_str(),
+                                            static_cast<chfs::InodeType>(type));
+  if (is_log_enabled_) {
+    this->operation_->block_manager_->stop_logging();
+    auto txn_id = this->operation_->block_manager_->increase_and_get_txn_id();
+    this->commit_log->append_log(txn_id, op_vec);
+    auto flush_result = this->operation_->block_manager_->flush_ops(&op_vec);
+    if (flush_result.is_err()) return 0;
+    this->commit_log->commit_log(txn_id);
+    this->commit_log->checkpoint();
   }
 
+  if (result.is_ok()) return result.unwrap();
   return 0;
 }
 
 // {Your code here}
 auto MetadataServer::unlink(inode_id_t parent, const std::string &name)
     -> bool {
-  // TODO: Implement this function.
-  // UNIMPLEMENTED();
+  // check if the inode is a directory
+  const auto block_size = this->operation_->block_manager_->block_size();
   std::lock_guard parent_lock(inode_locks[parent % LOCK_CNT]);
+  std::vector<u8> inode_vec(block_size);
+  auto read_inode_res =
+      this->operation_->inode_manager_->read_inode(parent, inode_vec);
+  if (read_inode_res.is_err()) return {};
+  Inode *inode_p = reinterpret_cast<Inode *>(inode_vec.data());
+  if (inode_p->get_type() != InodeType::Directory) return 0;
+
   std::lock_guard table_lock(inode_table_lock);
-  auto result = operation_->unlink(parent, name.c_str());
-  if (result.is_ok())
-  {
-    return true;
+
+  std::vector<std::shared_ptr<BlockOperation>> op_vec;
+  if (is_log_enabled_) {
+    this->operation_->block_manager_->start_logging(&op_vec);
   }
 
+  auto result = this->operation_->unlink(parent, name.c_str());
+  if (is_log_enabled_) {
+    this->operation_->block_manager_->stop_logging();
+    auto txn_id = this->operation_->block_manager_->increase_and_get_txn_id();
+    this->commit_log->append_log(txn_id, op_vec);
+    auto flush_result = this->operation_->block_manager_->flush_ops(&op_vec);
+    if (flush_result.is_err()) return 0;
+    this->commit_log->commit_log(txn_id);
+    this->commit_log->checkpoint();
+  }
+
+  if (result.is_ok()) return true;
   return false;
 }
 
 // {Your code here}
 auto MetadataServer::lookup(inode_id_t parent, const std::string &name)
     -> inode_id_t {
-  // TODO: Implement this function.
-  // UNIMPLEMENTED();
+  // check if the inode is a directory
+  const auto block_size = this->operation_->block_manager_->block_size();
   std::lock_guard parent_lock(inode_locks[parent % LOCK_CNT]);
-  auto result = operation_->lookup(parent, name.c_str());
-  if (result.is_ok())
-  {
+  std::vector<u8> inode_vec(block_size);
+  auto read_inode_res =
+      this->operation_->inode_manager_->read_inode(parent, inode_vec);
+  if (read_inode_res.is_err()) return {};
+  Inode *inode_p = reinterpret_cast<Inode *>(inode_vec.data());
+  if (inode_p->get_type() != InodeType::Directory) return 0;
+
+  auto result = this->operation_->lookup(parent, name.c_str());
+  if (result.is_ok()) {
     return result.unwrap();
   }
 
   return 0;
 }
 
+// utility function to calculate how many blocks are there in the file
+auto calculate_block_cnt(u64 file_sz, u64 block_sz) -> u64 {
+  return (file_sz % block_sz) ? (file_sz / block_sz + 1) : (file_sz / block_sz);
+}
+
 // {Your code here}
 auto MetadataServer::get_block_map(inode_id_t id) -> std::vector<BlockInfo> {
-  // TODO: Implement this function.
-  // UNIMPLEMENTED();
-  const auto block_size = operation_->block_manager_->block_size();
-
-  std::vector<u8> block_info(operation_->block_manager_->block_size());
+  const auto block_size = this->operation_->block_manager_->block_size();
+  std::vector<u8> inode_vec(block_size);
   std::lock_guard inode_lock(inode_locks[id % LOCK_CNT]);
-  auto resd_inode_result = operation_->inode_manager_->read_inode(id, block_info); //对 std::vector<u8> 类型的非 const 左值引用不能绑定到类型 BlockInfo* 的右值
-  if (resd_inode_result.is_err())
-  {
+  auto read_inode_res =
+      this->operation_->inode_manager_->read_inode(id, inode_vec);
+  if (read_inode_res.is_err()) {
     return {};
   }
+  Inode *inode_p = reinterpret_cast<Inode *>(inode_vec.data());
+  if (inode_p->get_type() != InodeType::FILE)
+    return {};  // should not read a directory as a file
 
-  Inode *inode_ptr = reinterpret_cast<Inode *>(block_info.data());
-  auto file_size = inode_ptr->get_size();
-  auto block_num = (file_size % block_size == 0) ? (file_size / block_size) : (file_size / block_size + 1);
-  std::vector<BlockInfo> result;
+  auto file_size = inode_p->get_size();
+  auto block_num = calculate_block_cnt(file_size, block_size);
+  std::vector<BlockInfo> result = std::vector<BlockInfo>();
   result.reserve(block_num);
-  auto *block_info_ptr = reinterpret_cast<BlockInfo *>(inode_ptr->blocks);
-
-  for (int i = 0; i < block_num; i++)
-  {
-    result.push_back(block_info_ptr[i]);
+  auto *block_info_p = reinterpret_cast<BlockInfo *>(inode_p->blocks);
+  for (chfs::u32 i = 0; i < block_num; i++) {
+    result.push_back(block_info_p[i]);
   }
 
   return result;
@@ -209,46 +247,42 @@ auto MetadataServer::get_block_map(inode_id_t id) -> std::vector<BlockInfo> {
 
 // {Your code here}
 auto MetadataServer::allocate_block(inode_id_t id) -> BlockInfo {
-  // TODO: Implement this function.
-  // UNIMPLEMENTED();
-  auto block_size = operation_->block_manager_->block_size();
+  // read the inode
+  const auto block_size = this->operation_->block_manager_->block_size();
   std::lock_guard inode_lock(inode_locks[id % LOCK_CNT]);
-  std::vector<u8> inode_vector(block_size);
-  auto read_inode_result = operation_->inode_manager_->read_inode(id, inode_vector);
-  if (read_inode_result.is_err())
-  {
-    return {};
-  }
+  std::vector<u8> inode_vec(block_size);
+  auto read_inode_res =
+      this->operation_->inode_manager_->read_inode(id, inode_vec);
+  if (read_inode_res.is_err()) return {};
+  auto inode_block_id = read_inode_res.unwrap();
+  Inode *inode_p = reinterpret_cast<Inode *>(inode_vec.data());
+  auto block_info_p = reinterpret_cast<BlockInfo *>(inode_p->blocks);
 
-  auto inode_block_id = read_inode_result.unwrap();
-  Inode *inode_ptr = reinterpret_cast<Inode *>(inode_vector.data());
-  auto block_info_ptr = reinterpret_cast<BlockInfo *>(inode_ptr->blocks);
+  // allocate the block
+  if (inode_p->get_type() != InodeType::FILE)
+    return {};  // should not allocate block like this for a directory
+  auto file_size = inode_p->get_size();
+  auto block_num = calculate_block_cnt(file_size, block_size);
+  if (block_num + 1 > inode_p->get_nblocks_metadata_server())
+    return {};  // too many blocks in the inode
+  auto client_idx = this->generator.rand(1, this->num_data_servers);
+  auto result = this->clients_[client_idx]->call("alloc_block");
+  if (result.is_err()) return {};
+  auto rpc_res = result.unwrap();
+  auto rpc_ret = rpc_res->as<std::pair<block_id_t, version_t>>();
+  if (rpc_ret == std::pair<block_id_t, version_t>()) return {};
 
-  //allocate block
-  if (inode_ptr->get_type() != InodeType::FILE)
-  {
-    return {};
-  }
-  auto file_size = inode_ptr->get_size();
-  auto block_num = (file_size % block_size == 0) ? (file_size / block_size) : (file_size / block_size + 1);
+  // update the inode
+  inode_p->inner_attr.size += block_size;
+  inode_p->inner_attr.ctime = inode_p->inner_attr.mtime = time(0);
+  auto new_block_info =
+      std::make_tuple(rpc_ret.first, client_idx, rpc_ret.second);
+  block_info_p[block_num] = new_block_info;
 
-  auto client_index = generator.rand(1, num_data_servers);
-  auto result = clients_[client_index]->call("alloc_block");
-
-  auto rpc_result = result.unwrap();
-  auto rpc_return = rpc_result->as<std::pair<block_id_t, version_t>>();
-
-  inode_ptr->inner_attr.size += block_size;
-  inode_ptr->inner_attr.ctime = inode_ptr->inner_attr.mtime = time(nullptr);
-
-  auto new_block_info = std::make_tuple(rpc_return.first, client_index, rpc_return.second);
-  block_info_ptr[block_num] = new_block_info;
-
-  auto write_inode_result = operation_->block_manager_->write_block(inode_block_id, inode_vector.data());
-  if (write_inode_result.is_err())
-  {
-    return {};
-  }
+  // write back the inode
+  auto write_inode_res = this->operation_->block_manager_->write_block(
+      inode_block_id, inode_vec.data());
+  if (write_inode_res.is_err()) return {};
 
   return new_block_info;
 }
@@ -269,12 +303,11 @@ auto MetadataServer::free_block(inode_id_t id, block_id_t block_id,
 
   // find the block to free
   BlockInfo *block_info_p = reinterpret_cast<BlockInfo *>(inode_p->blocks);
-  u32 block_idx_to_remove;
+  chfs::u32 block_idx_to_remove;
   bool found = false;
   auto file_size = inode_p->get_size();
-  auto block_num = file_size % block_size == 0 ? file_size / block_size
-                                               : file_size / block_size + 1;
-  for (u32 i = 0; i < block_num; i++) {
+  auto block_num = calculate_block_cnt(file_size, block_size);
+  for (chfs::u32 i = 0; i < block_num; i++) {
     if (std::get<0>(block_info_p[i]) == block_id &&
         std::get<1>(block_info_p[i]) == machine_id) {
       block_idx_to_remove = i;
@@ -291,10 +324,16 @@ auto MetadataServer::free_block(inode_id_t id, block_id_t block_id,
   if (!rpc_ret) return false;
 
   // remove the block from the inode and update attributes
-  for (u32 i = block_idx_to_remove; i < block_num - 1; i++) {
+  for (chfs::u32 i = block_idx_to_remove; i < block_num - 1; i++) {
     block_info_p[i] = block_info_p[i + 1];
   }
-  u64 new_file_size = file_size - block_size;
+  // chfs::u64 new_file_size = ((block_idx_to_remove == block_num - 1ul)
+  //                                ? (file_size % block_size == 0
+  //                                       ? (file_size - block_size)
+  //                                       : (file_size - file_size %
+  //                                       block_size))
+  //                                : (file_size - block_size));
+  chfs::u64 new_file_size = file_size - block_size;
   inode_p->inner_attr.size = new_file_size;
   inode_p->inner_attr.ctime = inode_p->inner_attr.mtime = time(0);
 
@@ -308,38 +347,39 @@ auto MetadataServer::free_block(inode_id_t id, block_id_t block_id,
 // {Your code here}
 auto MetadataServer::readdir(inode_id_t node)
     -> std::vector<std::pair<std::string, inode_id_t>> {
-  // TODO: Implement this function.
-  // UNIMPLEMENTED();
+  const auto block_size = this->operation_->block_manager_->block_size();
   std::lock_guard inode_lock(inode_locks[node % LOCK_CNT]);
-  std::vector<std::pair<std::string, inode_id_t>> result;
-  std::list<DirectoryEntry> list;
-  read_directory(operation_.get(), node, list);
+  std::vector<u8> inode_vec(block_size);
+  auto read_inode_res =
+      this->operation_->inode_manager_->read_inode(node, inode_vec);
+  if (read_inode_res.is_err()) return {};
+  Inode *inode_p = reinterpret_cast<Inode *>(inode_vec.data());
+  if (inode_p->get_type() != InodeType::Directory)
+    return {};  // should not read a file as a directory
 
-  for (auto iter = list.begin(); iter != list.end(); iter++)
-  {
-    result.push_back(std::make_pair(iter->name, iter->id));
+  std::list<DirectoryEntry> dir_list;
+  auto read_dir_res = read_directory(this->operation_.get(), node, dir_list);
+  if (read_dir_res.is_err()) return {};
+  std::vector<std::pair<std::string, inode_id_t>> dir_vec;
+  for (const auto &item : dir_list) {
+    dir_vec.push_back(std::make_pair(item.name, item.id));
   }
-
-  return result;
+  return dir_vec;
 }
 
 // {Your code here}
 auto MetadataServer::get_type_attr(inode_id_t id)
     -> std::tuple<u64, u64, u64, u64, u8> {
-  // TODO: Implement this function.
-  // UNIMPLEMENTED();
+  const auto block_size = this->operation_->block_manager_->block_size();
   std::lock_guard inode_lock(inode_locks[id % LOCK_CNT]);
-  auto get_res = operation_->get_type_attr(id);
-  if (get_res.is_err())
-  {
-    return std::tuple<u64, u64, u64, u64, u8>(0, 0, 0, 0, 0);
-  }
-
-  auto pair = get_res.unwrap();
-  InodeType inode_type = pair.first;
-  FileAttr file_attr = pair.second;
-
-  return std::tuple<u64, u64, u64, u64, u8>(file_attr.size, file_attr.atime, file_attr.mtime, file_attr.ctime, static_cast<u8>(inode_type));
+  std::vector<u8> inode_vec(block_size);
+  auto read_inode_res =
+      this->operation_->inode_manager_->read_inode(id, inode_vec);
+  if (read_inode_res.is_err()) return {};
+  auto inode_p = reinterpret_cast<Inode *>(inode_vec.data());
+  const auto &attr = inode_p->inner_attr;
+  return std::make_tuple(attr.size, attr.atime, attr.mtime, attr.ctime,
+                         static_cast<u8>(inode_p->get_type()));
 }
 
 auto MetadataServer::reg_server(const std::string &address, u16 port,
@@ -352,8 +392,7 @@ auto MetadataServer::reg_server(const std::string &address, u16 port,
 }
 
 auto MetadataServer::run() -> bool {
-  if (running)
-    return false;
+  if (running) return false;
 
   // Currently we only support async start
   server_->run(true, num_worker_threads);
@@ -361,4 +400,4 @@ auto MetadataServer::run() -> bool {
   return true;
 }
 
-} // namespace chfs
+}  // namespace chfs

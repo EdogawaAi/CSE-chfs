@@ -1,4 +1,5 @@
 #include "distributed/client.h"
+
 #include "common/macros.h"
 #include "common/util.h"
 #include "distributed/metadata_server.h"
@@ -10,17 +11,17 @@ ChfsClient::ChfsClient() : num_data_servers(0) {}
 auto ChfsClient::reg_server(ServerType type, const std::string &address,
                             u16 port, bool reliable) -> ChfsNullResult {
   switch (type) {
-  case ServerType::DATA_SERVER:
-    num_data_servers += 1;
-    data_servers_.insert({num_data_servers, std::make_shared<RpcClient>(
-                                                address, port, reliable)});
-    break;
-  case ServerType::METADATA_SERVER:
-    metadata_server_ = std::make_shared<RpcClient>(address, port, reliable);
-    break;
-  default:
-    std::cerr << "Unknown Type" << std::endl;
-    exit(1);
+    case ServerType::DATA_SERVER:
+      num_data_servers += 1;
+      data_servers_.insert({num_data_servers, std::make_shared<RpcClient>(
+                                                  address, port, reliable)});
+      break;
+    case ServerType::METADATA_SERVER:
+      metadata_server_ = std::make_shared<RpcClient>(address, port, reliable);
+      break;
+    default:
+      std::cerr << "Unknown Type" << std::endl;
+      exit(1);
   }
 
   return KNullOk;
@@ -29,118 +30,71 @@ auto ChfsClient::reg_server(ServerType type, const std::string &address,
 // {Your code here}
 auto ChfsClient::mknode(FileType type, inode_id_t parent,
                         const std::string &name) -> ChfsResult<inode_id_t> {
-  // TODO: Implement this function.
-  //UNIMPLEMENTED();
-  auto response = metadata_server_->call("mknode", static_cast<u8>(type), parent, name);
-  if(response.is_err()){
-    auto error_code = response.unwrap_error();
-    return ChfsResult<inode_id_t>(error_code);
-  }
-  auto inode_id = response.unwrap()->as<inode_id_t>();
-  if(inode_id == KInvalidInodeID){
-    auto error_code = ErrorType::NotPermitted;
-    return ChfsResult<inode_id_t>(error_code);
-  }
-  return ChfsResult<inode_id_t>(inode_id);
+  auto rpc_res =
+      metadata_server_->call("mknode", static_cast<u8>(type), parent, name);
+  if (rpc_res.is_err()) return ChfsResult<inode_id_t>(rpc_res.unwrap_error());
+  auto ret = rpc_res.unwrap()->as<inode_id_t>();
+  if (ret) return ChfsResult<inode_id_t>(ret);
+  return ChfsResult<inode_id_t>(ErrorType::NotPermitted);
 }
 
 // {Your code here}
 auto ChfsClient::unlink(inode_id_t parent, std::string const &name)
     -> ChfsNullResult {
-  // TODO: Implement this function.
-  // UNIMPLEMENTED();
-  auto response = metadata_server_->call("unlink", parent, name);
-  if(response.is_err()){
-    auto error_code = response.unwrap_error();
-    return ChfsNullResult(error_code);
-  }
-  auto is_success = response.unwrap()->as<bool>();
-  if(!is_success){
-    auto error_code = ErrorType::NotPermitted;
-    return ChfsNullResult(error_code);
-  }
-  return KNullOk;
+  auto rpc_res = metadata_server_->call("unlink", parent, name);
+  if (rpc_res.is_err()) return ChfsNullResult(rpc_res.unwrap_error());
+  auto ret = rpc_res.unwrap()->as<bool>();
+  if (ret) return KNullOk;
+  return ChfsNullResult(ErrorType::NotPermitted);
 }
 
 // {Your code here}
 auto ChfsClient::lookup(inode_id_t parent, const std::string &name)
     -> ChfsResult<inode_id_t> {
-  // TODO: Implement this function.
-  //UNIMPLEMENTED();
-  auto response = metadata_server_->call("lookup", parent, name);
-  if(response.is_err()){
-    auto error_code = response.unwrap_error();
-    return ChfsResult<inode_id_t>(error_code);
-  }
-  auto inode_id = response.unwrap()->as<inode_id_t>();
-  if(inode_id == KInvalidInodeID){
-    auto error_code = ErrorType::INVALID;
-    return ChfsResult<inode_id_t>(error_code);
-  }
-  return ChfsResult<inode_id_t>(inode_id);
+  auto rpc_res = metadata_server_->call("lookup", parent, name);
+  if (rpc_res.is_err()) return ChfsResult<inode_id_t>(rpc_res.unwrap_error());
+  auto ret = rpc_res.unwrap()->as<inode_id_t>();
+  return ChfsResult<inode_id_t>(ret);
 }
 
 // {Your code here}
 auto ChfsClient::readdir(inode_id_t id)
     -> ChfsResult<std::vector<std::pair<std::string, inode_id_t>>> {
-  // TODO: Implement this function.
-  // UNIMPLEMENTED();
-  auto response = metadata_server_->call("readdir", id);
-  if(response.is_err()){
-    auto error_code = response.unwrap_error();
-    return ChfsResult<std::vector<std::pair<std::string, inode_id_t>>>(error_code);
-  }
-  auto pair_vec = response.unwrap()->as<std::vector<std::pair<std::string, inode_id_t>>>();
-  return ChfsResult<std::vector<std::pair<std::string, inode_id_t>>>(pair_vec);
+  auto rpc_res = metadata_server_->call("readdir", id);
+  if (rpc_res.is_err())
+    return ChfsResult<std::vector<std::pair<std::string, inode_id_t>>>(
+        rpc_res.unwrap_error());
+  auto ret =
+      rpc_res.unwrap()->as<std::vector<std::pair<std::string, inode_id_t>>>();
+  return ChfsResult<std::vector<std::pair<std::string, inode_id_t>>>(ret);
 }
 
 // {Your code here}
 auto ChfsClient::get_type_attr(inode_id_t id)
     -> ChfsResult<std::pair<InodeType, FileAttr>> {
-  // TODO: Implement this function.
-  // UNIMPLEMENTED();
-  auto response = metadata_server_->call("get_type_attr", id);
-  if(response.is_err()){
-    auto error_code = response.unwrap_error();
-    return ChfsResult<std::pair<InodeType, FileAttr>>(error_code);
-  }
-  auto res = response.unwrap()->as<std::tuple<u64, u64, u64, u64, u8>>();
-  auto type = std::get<4>(res);
-  InodeType inode_type;
-  if(type == DirectoryType){
-    inode_type = InodeType::Directory;
-  }
-  else if(type == RegularFileType){
-    inode_type = InodeType::FILE;
-  }
-  else{
-    inode_type = InodeType::Unknown;
-  }
-  FileAttr file_attr;
-  file_attr.size = std::get<0>(res);
-  file_attr.atime = std::get<1>(res);
-  file_attr.mtime = std::get<2>(res);
-  file_attr.ctime = std::get<3>(res);
-  std::pair<InodeType, FileAttr> res_pair(inode_type, file_attr);
-  return ChfsResult<std::pair<InodeType, FileAttr>>(res_pair);
+  auto rpc_res = metadata_server_->call("get_type_attr", id);
+  if (rpc_res.is_err())
+    return ChfsResult<std::pair<InodeType, FileAttr>>(rpc_res.unwrap_error());
+  auto ret = rpc_res.unwrap()->as<std::tuple<u64, u64, u64, u64, u8>>();
+  auto type = static_cast<InodeType>(std::get<4>(ret));
+  FileAttr attr{std::get<1>(ret), std::get<2>(ret), std::get<3>(ret),
+                std::get<0>(ret)};
+  return ChfsResult<std::pair<InodeType, FileAttr>>(std::make_pair(type, attr));
 }
 
-  auto ChfsClient::read_single_block(block_id_t block_id, mac_id_t mac_id, version_t version, usize offset, usize len) -> ChfsResult<std::vector<u8>>
-  {
-    auto response = data_servers_[mac_id]->call("read_data", block_id, offset, len, version);
-  if (response.is_err())
-  {
-    auto error_code = response.unwrap_error();
-    return ChfsResult<std::vector<u8>>(error_code);
-  }
-  auto data = response.unwrap()->as<std::vector<u8>>();
-  if (data.size() != len)
-  {
+// helper function to read single block
+auto ChfsClient::read_single_block(block_id_t block_id, mac_id_t mac_id,
+                                   version_t version, usize offset, usize len)
+    -> ChfsResult<std::vector<u8>> {
+  auto rpc_res = this->data_servers_[mac_id]->call("read_data", block_id,
+                                                   offset, len, version);
+  if (rpc_res.is_err())
+    return ChfsResult<std::vector<u8>>(rpc_res.unwrap_error());
+  auto ret = rpc_res.unwrap()->as<std::vector<u8>>();
+  if (ret.size() != len)
     return ChfsResult<std::vector<u8>>(ErrorType::NotPermitted);
-  }
-  return ChfsResult<std::vector<u8>>(data);
-  }
-
+  return ChfsResult<std::vector<u8>>(ret);
+}
 
 /**
  * Read and Write operations are more complicated.
@@ -148,10 +102,6 @@ auto ChfsClient::get_type_attr(inode_id_t id)
 // {Your code here}
 auto ChfsClient::read_file(inode_id_t id, usize offset, usize size)
     -> ChfsResult<std::vector<u8>> {
-  // TODO: Implement this function.
-  // UNIMPLEMENTED();
-  // first, get the block mapping from metadata server
-  // as a client, we don't have any method to know how large a block is in dataserver, so we use default value
   auto block_map_rpc_res = metadata_server_->call("get_block_map", id);
   if (block_map_rpc_res.is_err())
     return ChfsResult<std::vector<u8>>(block_map_rpc_res.unwrap_error());
@@ -195,29 +145,21 @@ auto ChfsClient::read_file(inode_id_t id, usize offset, usize size)
   return ChfsResult<std::vector<u8>>(file_content);
 }
 
-auto ChfsClient::write_single_block(block_id_t block_id, mac_id_t mac_id, version_t version, usize offset, std::vector<u8> buffer) -> ChfsNullResult
-{
-  auto response = data_servers_[mac_id]->call("write_data", block_id, offset, buffer);
-  if (response.is_err())
-  {
-    auto error_code = response.unwrap_error();
-    return ChfsNullResult(error_code);
-  }
-  auto is_success = response.unwrap()->as<bool>();
-  if (!is_success)
-  {
-    return ChfsNullResult(ErrorType::NotPermitted);
-  }
+// helper function to write single block
+auto ChfsClient::write_single_block(block_id_t block_id, mac_id_t mac_id,
+                                    version_t version, usize offset,
+                                    std::vector<u8> buffer) -> ChfsNullResult {
+  auto rpc_res =
+      this->data_servers_[mac_id]->call("write_data", block_id, offset, buffer);
+  if (rpc_res.is_err()) return ChfsNullResult(rpc_res.unwrap_error());
+  auto rpc_ret = rpc_res.unwrap()->as<bool>();
+  if (!rpc_ret) return ChfsNullResult(ErrorType::NotPermitted);
   return KNullOk;
 }
-
 
 // {Your code here}
 auto ChfsClient::write_file(inode_id_t id, usize offset, std::vector<u8> data)
     -> ChfsNullResult {
-  // TODO: Implement this function.
-  // UNIMPLEMENTED();
-
   auto block_map_rpc_res = metadata_server_->call("get_block_map", id);
   if (block_map_rpc_res.is_err())
     return ChfsNullResult(block_map_rpc_res.unwrap_error());
@@ -280,19 +222,12 @@ auto ChfsClient::write_file(inode_id_t id, usize offset, std::vector<u8> data)
 // {Your code here}
 auto ChfsClient::free_file_block(inode_id_t id, block_id_t block_id,
                                  mac_id_t mac_id) -> ChfsNullResult {
-  // TODO: Implement this function.
-  // UNIMPLEMENTED();
-  auto response = metadata_server_->call("free_block", id, block_id, mac_id);
-  if(response.is_err()){
-    auto error_code = response.unwrap_error();
-    return ChfsNullResult(error_code);
-  }
-  auto is_success = response.unwrap()->as<bool>();
-  if(!is_success){
-    auto error_code = ErrorType::NotExist;
-    return ChfsNullResult(error_code);
-  }
+  auto rpc_res =
+      this->metadata_server_->call("free_block", id, block_id, mac_id);
+  if (rpc_res.is_err()) return ChfsNullResult(rpc_res.unwrap_error());
+  auto rpc_ret = rpc_res.unwrap()->as<bool>();
+  if (!rpc_ret) return ChfsNullResult(ErrorType::NotPermitted);
   return KNullOk;
 }
 
-} // namespace chfs
+}  // namespace chfs

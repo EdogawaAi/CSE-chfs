@@ -1,7 +1,34 @@
 #include "distributed/dataserver.h"
+
 #include "common/util.h"
 
 namespace chfs {
+
+auto DataServer::get_block_version(block_id_t block_id) -> version_t {
+  const auto version_block_id = block_id / versions_per_block;
+  const auto block_size = this->block_allocator_->bm->block_size();
+  auto buffer = std::vector<u8>(block_size);
+  auto read_res =
+      this->block_allocator_->bm->read_block(version_block_id, buffer.data());
+  if (read_res.is_err()) return 0;
+  auto versions = reinterpret_cast<version_t *>(buffer.data());
+  return versions[block_id % versions_per_block];
+}
+
+auto DataServer::update_block_version(block_id_t block_id) -> version_t {
+  const auto version_block_id = block_id / versions_per_block;
+  const auto block_size = this->block_allocator_->bm->block_size();
+  auto buffer = std::vector<u8>(block_size);
+  auto read_res =
+      this->block_allocator_->bm->read_block(version_block_id, buffer.data());
+  if (read_res.is_err()) return 0;
+  auto versions = reinterpret_cast<version_t *>(buffer.data());
+  auto new_version = ++versions[block_id % versions_per_block];
+  auto write_res =
+      this->block_allocator_->bm->write_block(version_block_id, buffer.data());
+  if (write_res.is_err()) return 0;
+  return new_version;
+}
 
 auto DataServer::initialize(std::string const &data_path) {
   /**
@@ -14,13 +41,21 @@ auto DataServer::initialize(std::string const &data_path) {
 
   auto bm = std::shared_ptr<BlockManager>(
       new BlockManager(data_path, KDefaultBlockCnt));
+
+  this->versions_per_block = bm->block_size() / sizeof(version_t);
+  this->version_block_num =
+      (KDefaultBlockCnt * sizeof(version_t)) / bm->block_size();
   if (is_initialized) {
     block_allocator_ =
-        std::make_shared<BlockAllocator>(bm, 0, false);
+        std::make_shared<BlockAllocator>(bm, version_block_num, false);
   } else {
     // We need to reserve some blocks for storing the version of each block
     block_allocator_ = std::shared_ptr<BlockAllocator>(
-        new BlockAllocator(bm, 0, true));
+        new BlockAllocator(bm, version_block_num, true));
+    // zero the version blocks
+    for (u32 i = 0; i < version_block_num; i++) {
+      bm->zero_block(i);
+    }
   }
 
   // Initialize the RPC server and bind all handlers
@@ -58,22 +93,16 @@ DataServer::~DataServer() { server_.reset(); }
 auto DataServer::read_data(block_id_t block_id, usize offset, usize len,
                            version_t version) -> std::vector<u8> {
   // TODO: Implement this function.
-  // UNIMPLEMENTED();
- if (get_block_version(block_id) != version)
- {
-   return {};
- }
-  auto block_size = block_allocator_->bm->block_size();
-  if (offset + len > block_size)
-  {
-    // throw std::runtime_error("Read out of block boundary");
-    return {};
-  }
-
-  std::vector<u8> buffer(block_size);
-  block_allocator_->bm->read_block(block_id, buffer.data());
-  std::vector<u8> result(buffer.begin() + offset, buffer.begin() + offset + len);
-
+  // TODO: Implement version.
+  if (this->get_block_version(block_id) != version)
+    return {};  // version mismatch
+  usize block_siz = this->block_allocator_->bm->block_size();
+  if (offset + len > block_siz) return {};
+  std::vector<u8> buffer;
+  buffer.resize(block_siz);
+  this->block_allocator_->bm->read_block(block_id, buffer.data());
+  std::vector<u8> result(buffer.begin() + offset,
+                         buffer.begin() + len + offset);
   return result;
 }
 
@@ -81,79 +110,36 @@ auto DataServer::read_data(block_id_t block_id, usize offset, usize len,
 auto DataServer::write_data(block_id_t block_id, usize offset,
                             std::vector<u8> &buffer) -> bool {
   // TODO: Implement this function.
-  // UNIMPLEMENTED();
-  std::vector<u8> block_data (block_allocator_->bm->block_size());
-  block_allocator_->bm->read_block(block_id, block_data.data());
-
-  if (offset + buffer.size() > block_data.size())
-  {
-    // throw std::runtime_error("Write out of block boundary");
-    return false;
-  }
-
-  std::copy(buffer.begin(), buffer.end(), block_data.begin() + offset);
-
-  block_allocator_->bm->write_block(block_id, block_data.data());
-
+  usize block_siz = this->block_allocator_->bm->block_size();
+  usize len = buffer.size();
+  if (offset + len > block_siz) return false;
+  auto write_result = this->block_allocator_->bm->write_partial_block(
+      block_id, buffer.data(), offset, buffer.size());
+  if (write_result.is_err()) return false;
   return true;
 }
 
 // {Your code here}
 auto DataServer::alloc_block() -> std::pair<block_id_t, version_t> {
   // TODO: Implement this function.
-  // UNIMPLEMENTED();
- auto allocate_result = block_allocator_->allocate();
-  if (allocate_result.is_err())
-  {
-    return {0, 0};
-  }
-
-  block_id_t block_id = allocate_result.unwrap();
-  auto new_version = update_block_version(block_id);
-  return {block_id, new_version};
-
+  // TODO: Implement version.
+  std::lock_guard lock(this->allocator_lock);
+  auto allocate_result = this->block_allocator_->allocate();
+  if (allocate_result.is_err()) return {};
+  auto block_id = allocate_result.unwrap();
+  auto version = update_block_version(block_id);
+  return std::make_pair(block_id, version);
 }
 
 // {Your code here}
 auto DataServer::free_block(block_id_t block_id) -> bool {
   // TODO: Implement this function.
-  // UNIMPLEMENTED();
-  if (block_allocator_->deallocate(block_id).is_err())
-  {
-    return false;
-  }
+  std::lock_guard lock(this->allocator_lock);
   update_block_version(block_id);
-
-  return true;
+  auto free_result = this->block_allocator_->deallocate(block_id);
+  if (free_result.is_ok()) {
+    return true;
+  }
+  return false;
 }
-  auto DataServer::get_block_version(block_id_t block_id) -> version_t
-  {
-    auto version_per_block = block_allocator_->bm->block_size() / sizeof(version_t);
-    block_id_t block_idx = block_id / version_per_block;
-    block_id_t version_idx = block_id % version_per_block;
-
-    std::vector<u8> version_block(block_allocator_->bm->block_size());
-    block_allocator_->bm->read_block(block_idx, version_block.data());
-
-    auto version_ptr = reinterpret_cast<version_t *>(version_block.data());
-    return version_ptr[version_idx];
-  }
-
-  auto DataServer::update_block_version(block_id_t block_id) -> version_t
-  {
-    auto version_per_block = block_allocator_->bm->block_size() / sizeof(version_t);
-  block_id_t block_idx = block_id / version_per_block;
-  block_id_t version_idx = block_id % version_per_block;
-
-  std::vector<u8> version_block(block_allocator_->bm->block_size());
-  block_allocator_->bm->read_block(block_idx, version_block.data());
-
-  auto version_ptr = reinterpret_cast<version_t *>(version_block.data());
-  version_ptr[version_idx]++;
-
-  block_allocator_->bm->write_block(block_idx, version_block.data());
-  return version_ptr[version_idx];
-  }
-
-
-} // namespace chfs
+}  // namespace chfs
