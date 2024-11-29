@@ -38,7 +38,7 @@ auto ChfsClient::mknode(FileType type, inode_id_t parent,
   }
   auto inode_id = response.unwrap()->as<inode_id_t>();
   if(inode_id == KInvalidInodeID){
-    auto error_code = ErrorType::INVALID;
+    auto error_code = ErrorType::NotPermitted;
     return ChfsResult<inode_id_t>(error_code);
   }
   return ChfsResult<inode_id_t>(inode_id);
@@ -56,7 +56,7 @@ auto ChfsClient::unlink(inode_id_t parent, std::string const &name)
   }
   auto is_success = response.unwrap()->as<bool>();
   if(!is_success){
-    auto error_code = ErrorType::INVALID;
+    auto error_code = ErrorType::NotPermitted;
     return ChfsNullResult(error_code);
   }
   return KNullOk;
@@ -125,6 +125,23 @@ auto ChfsClient::get_type_attr(inode_id_t id)
   return ChfsResult<std::pair<InodeType, FileAttr>>(res_pair);
 }
 
+  auto ChfsClient::read_single_block(block_id_t block_id, mac_id_t mac_id, version_t version, usize offset, usize len) -> ChfsResult<std::vector<u8>>
+  {
+    auto response = data_servers_[mac_id]->call("read_data", block_id, offset, len, version);
+  if (response.is_err())
+  {
+    auto error_code = response.unwrap_error();
+    return ChfsResult<std::vector<u8>>(error_code);
+  }
+  auto data = response.unwrap()->as<std::vector<u8>>();
+  if (data.size() != len)
+  {
+    return ChfsResult<std::vector<u8>>(ErrorType::NotPermitted);
+  }
+  return ChfsResult<std::vector<u8>>(data);
+  }
+
+
 /**
  * Read and Write operations are more complicated.
  */
@@ -135,63 +152,65 @@ auto ChfsClient::read_file(inode_id_t id, usize offset, usize size)
   // UNIMPLEMENTED();
   // first, get the block mapping from metadata server
   // as a client, we don't have any method to know how large a block is in dataserver, so we use default value
-  const auto BLOCK_SIZE = DiskBlockSize;
-  auto get_block_map_response = metadata_server_->call("get_block_map", id);
-  if(get_block_map_response.is_err()){
-    auto error_code = get_block_map_response.unwrap_error();
-    return ChfsResult<std::vector<u8>>(error_code);
+  auto block_map_rpc_res = metadata_server_->call("get_block_map", id);
+  if (block_map_rpc_res.is_err())
+    return ChfsResult<std::vector<u8>>(block_map_rpc_res.unwrap_error());
+  auto block_map = block_map_rpc_res.unwrap()->as<std::vector<BlockInfo>>();
+  if (block_map.empty()) return ChfsResult<std::vector<u8>>({});
+  auto file_length = block_map.size() * BLOCK_SIZE;
+  auto file_content = std::vector<u8>(0);
+  if (offset + size > file_length)
+    return ChfsResult<std::vector<u8>>(ErrorType::INVALID_ARG);
+  file_content.reserve(size);
+  usize size_already_read = 0;
+  usize current_block_idx = offset / BLOCK_SIZE;
+  if (offset % BLOCK_SIZE != 0) {
+    const auto current_read_len = BLOCK_SIZE - offset % BLOCK_SIZE;
+    const auto &current_block_info = block_map[current_block_idx];
+    const auto &[block_id, mac_id, version] = current_block_info;
+    auto read_block_res = read_single_block(
+        block_id, mac_id, version, offset % BLOCK_SIZE, current_read_len);
+    if (read_block_res.is_err())
+      return ChfsResult<std::vector<u8>>(read_block_res.unwrap_error());
+    auto buffer = read_block_res.unwrap();
+    file_content.insert(file_content.end(), buffer.begin(), buffer.end());
+    current_block_idx++;
+    size_already_read += current_read_len;
   }
-  auto block_info_vec = get_block_map_response.unwrap()->as<std::vector<chfs::BlockInfo>>();
-  auto file_sz = block_info_vec.size() * BLOCK_SIZE;
-  if(offset + size > file_sz){
-    // this error means that you are trying to read data out of range of this file
-    auto error_code = ErrorType::INVALID_ARG;
-    return ChfsResult<std::vector<u8>>(error_code);
+  while (size_already_read < size) {
+    const auto current_read_len =
+        std::min(BLOCK_SIZE, size - size_already_read);
+    const auto &current_block_info = block_map[current_block_idx];
+    const auto &[block_id, mac_id, version] = current_block_info;
+    auto read_block_res =
+        read_single_block(block_id, mac_id, version, 0, current_read_len);
+    if (read_block_res.is_err())
+      return ChfsResult<std::vector<u8>>(read_block_res.unwrap_error());
+    auto buffer = read_block_res.unwrap();
+    file_content.insert(file_content.end(), buffer.begin(), buffer.end());
+    current_block_idx++;
+    size_already_read += current_read_len;
   }
-  // now we read data block by block from dataserver to a buffer
-  std::vector<u8> res(size);
-  //!notice that start block & end block have to be handled specially because they can be not align to block
-  auto read_start_idx = offset / BLOCK_SIZE;
-  auto read_start_offset = offset % BLOCK_SIZE;
-  auto read_end_idx = ((offset + size) % BLOCK_SIZE) ? ((offset + size) / BLOCK_SIZE + 1) : ((offset + size) / BLOCK_SIZE);
-  auto read_end_offset = ((offset + size) % BLOCK_SIZE) ? ((offset + size) % BLOCK_SIZE) : BLOCK_SIZE;
-  usize current_offset = 0;
-  for(auto it = block_info_vec.begin() + read_start_idx;it != block_info_vec.begin() + read_end_idx;++it){
-    block_id_t block_id = std::get<0>(*it);
-    mac_id_t mac_id = std::get<1>(*it);
-    version_t version_id = std::get<2>(*it);
-    auto mac_it = data_servers_.find(mac_id);
-    if(mac_it == data_servers_.end()){
-      auto error_code = ErrorType::INVALID_ARG;
-      return ChfsResult<std::vector<u8>>(error_code);
-    }
-    auto target_mac = mac_it->second;
 
-    auto read_response = target_mac->call("read_data", block_id, 0, BLOCK_SIZE, version_id);
-    if(read_response.is_err()){
-      auto error_code = read_response.unwrap_error();
-      return ChfsResult<std::vector<u8>>(error_code);
-    }
-    auto read_vec = read_response.unwrap()->as<std::vector<u8>>();
-    if(it == block_info_vec.begin() + read_start_idx && it == block_info_vec.begin() + (read_end_idx - 1)){
-      std::copy(read_vec.begin() + read_start_offset, read_vec.begin() + read_end_offset, res.begin());
-      return ChfsResult<std::vector<u8>>(res);
-    }
-    if(it == block_info_vec.begin() + read_start_idx){
-      std::copy(read_vec.begin() + read_start_offset, read_vec.end(), res.begin());
-      current_offset += BLOCK_SIZE - read_start_offset;
-    }
-    else if(it == block_info_vec.begin() + (read_end_idx - 1)){
-      std::copy_n(read_vec.begin(), read_end_offset, res.begin() + current_offset);
-      current_offset += read_end_offset;
-    }
-    else{
-      std::copy_n(read_vec.begin(), BLOCK_SIZE, res.begin() + current_offset);
-      current_offset += BLOCK_SIZE;
-    }
-  }
-  return ChfsResult<std::vector<u8>>(res);
+  return ChfsResult<std::vector<u8>>(file_content);
 }
+
+auto ChfsClient::write_single_block(block_id_t block_id, mac_id_t mac_id, version_t version, usize offset, std::vector<u8> buffer) -> ChfsNullResult
+{
+  auto response = data_servers_[mac_id]->call("write_data", block_id, offset, buffer);
+  if (response.is_err())
+  {
+    auto error_code = response.unwrap_error();
+    return ChfsNullResult(error_code);
+  }
+  auto is_success = response.unwrap()->as<bool>();
+  if (!is_success)
+  {
+    return ChfsNullResult(ErrorType::NotPermitted);
+  }
+  return KNullOk;
+}
+
 
 // {Your code here}
 auto ChfsClient::write_file(inode_id_t id, usize offset, std::vector<u8> data)
@@ -199,96 +218,63 @@ auto ChfsClient::write_file(inode_id_t id, usize offset, std::vector<u8> data)
   // TODO: Implement this function.
   // UNIMPLEMENTED();
 
-  const auto BLOCK_SIZE = DiskBlockSize;
-  auto write_length = data.size();
-  auto get_block_map_response = metadata_server_->call("get_block_map", id);
-  if(get_block_map_response.is_err()){
-    auto error_code = get_block_map_response.unwrap_error();
-    return ChfsNullResult(error_code);
-  }
-  auto block_info_vec = get_block_map_response.unwrap()->as<std::vector<chfs::BlockInfo>>();
-  auto old_file_sz = block_info_vec.size() * BLOCK_SIZE;
-
-  if(offset + write_length > old_file_sz){
-    //...if we need to alloc enough block first, then to write...//
-    auto new_block_num = ((offset + write_length) % BLOCK_SIZE) ? ((offset + write_length) / BLOCK_SIZE + 1) : ((offset + write_length) % BLOCK_SIZE);
-    auto old_block_num = block_info_vec.size();
-    // alloc some new block
-    for(auto i = old_block_num;i < new_block_num;++i){
-      auto alloc_response = metadata_server_->call("alloc_block", id);
-      if(alloc_response.is_err()){
-        auto error_code = alloc_response.unwrap_error();
-        return ChfsNullResult(error_code);
-      }
-      //? we have two choices: 1. alloc and get a new block_info then put it into block_info_vec 2. alloc and get a new block_info_vec from metadata server.
-      //? here we choose the first choice to implement, otherwise there is meaningless for function allocate_block to return a BlockInfo
-      auto new_block_info = alloc_response.unwrap()->as<BlockInfo>();
-      block_info_vec.push_back(new_block_info);
-    }
-    //...if we need to alloc enough block first, then to write...//
+  auto block_map_rpc_res = metadata_server_->call("get_block_map", id);
+  if (block_map_rpc_res.is_err())
+    return ChfsNullResult(block_map_rpc_res.unwrap_error());
+  auto block_map = block_map_rpc_res.unwrap()->as<std::vector<BlockInfo>>();
+  auto old_file_blocks_cnt = block_map.size();
+  auto old_file_size = old_file_blocks_cnt * BLOCK_SIZE;
+  // make sure the file size is aligned to block size (though it should be)
+  auto current_file_size =
+      old_file_size + ((old_file_size % BLOCK_SIZE == 0)
+                           ? (0ul)
+                           : (BLOCK_SIZE - old_file_size % BLOCK_SIZE));
+  auto buffer = std::vector<u8>(BLOCK_SIZE);  // inited as zero
+  usize write_length = data.size();
+  while (current_file_size < offset + write_length) {
+    auto allocation_res = metadata_server_->call("alloc_block", id);
+    if (allocation_res.is_err())
+      return ChfsNullResult(allocation_res.unwrap_error());
+    auto block_info = allocation_res.unwrap()->as<BlockInfo>();
+    const auto &[block_id, mac_id, version] = block_info;
+    auto write_res = write_single_block(block_id, mac_id, version, 0,
+                                        buffer);  // zero the allocated block
+    if (write_res.is_err()) return ChfsNullResult(write_res.unwrap_error());
+    block_map.push_back(block_info);
+    current_file_size += BLOCK_SIZE;
   }
 
-  //...if we don't need to alloc more block or we have allocated enough block to support our write operation...//
-  auto write_start_idx = offset / BLOCK_SIZE;
-  auto write_start_offset = offset % BLOCK_SIZE;
-  auto write_end_idx = ((offset + write_length) % BLOCK_SIZE) ? ((offset + write_length) / BLOCK_SIZE + 1) : ((offset + write_length) / BLOCK_SIZE);
-  auto write_end_offset = ((offset + write_length) % BLOCK_SIZE) ? ((offset + write_length) % BLOCK_SIZE) : BLOCK_SIZE;
-  usize current_offset = 0;
-  for(auto it = block_info_vec.begin() + write_start_idx;it != block_info_vec.begin() + write_end_idx;++it){
-    block_id_t block_id = std::get<0>(*it);
-    mac_id_t mac_id = std::get<1>(*it);
-    auto mac_it = data_servers_.find(mac_id);
-    if(mac_it == data_servers_.end()){
-      auto error_code = ErrorType::INVALID_ARG;
-      return ChfsNullResult(error_code);
-    }
-    auto target_mac = mac_it->second;
-    std::vector<u8> write_buf;
-    usize per_write_offset = 0;
-    if(it == block_info_vec.begin() + write_start_idx && it == block_info_vec.begin() + (write_end_idx - 1)){
-      auto write_response = target_mac->call("write_data", block_id, write_start_offset, data);
-      if(write_response.is_err()){
-        auto error_code = write_response.unwrap_error();
-        return ChfsNullResult(error_code);
-      }
-      auto is_success = write_response.unwrap()->as<bool>();
-      if(!is_success){
-        auto error_code = ErrorType::INVALID;
-        return ChfsNullResult(error_code);
-      }
-      return KNullOk;
-    }
-    if(it == block_info_vec.begin() + write_start_idx){
-      write_buf.resize(BLOCK_SIZE - write_start_offset);
-      std::copy_n(data.begin(), BLOCK_SIZE - write_start_offset, write_buf.begin());
-      per_write_offset = write_start_offset;
-      current_offset += BLOCK_SIZE - write_start_offset;
-    }
-    else if(it == block_info_vec.begin() + (write_end_idx - 1)){
-      write_buf.resize(write_end_offset);
-      std::copy_n(data.begin() + current_offset, write_end_offset, write_buf.begin());
-      per_write_offset = 0;
-      current_offset += write_end_offset;
-    }
-    else{
-      write_buf.resize(BLOCK_SIZE);
-      std::copy_n(data.begin() + current_offset, BLOCK_SIZE, write_buf.begin());
-      per_write_offset = 0;
-      current_offset += BLOCK_SIZE;
-    }
-    auto write_response = target_mac->call("write_data", block_id, per_write_offset, write_buf);
-    if(write_response.is_err()){
-      auto error_code = write_response.unwrap_error();
-      return ChfsNullResult(error_code);
-    }
-    auto is_success = write_response.unwrap()->as<bool>();
-    if(!is_success){
-      auto error_code = ErrorType::INVALID;
-      return ChfsNullResult(error_code);
-    }
+  auto current_block_idx = offset / BLOCK_SIZE;
+  usize size_written = 0;
+  if (offset % BLOCK_SIZE) {
+    auto current_write_length = BLOCK_SIZE - offset % BLOCK_SIZE;
+    buffer = std::vector<u8>(data.begin(), data.begin() + current_write_length);
+    const auto current_block_info = block_map[current_block_idx];
+    const auto &[block_id, mac_id, version] = current_block_info;
+    auto write_res = write_single_block(block_id, mac_id, version,
+                                        offset % BLOCK_SIZE, buffer);
+    if (write_res.is_err()) return ChfsNullResult(write_res.unwrap_error());
+    size_written += current_write_length;
+    current_block_idx++;
   }
+  while (size_written < write_length) {
+    auto current_write_length =
+        std::min(BLOCK_SIZE, write_length - size_written);
+    if (write_length - size_written >= BLOCK_SIZE) {
+      buffer = std::vector<u8>(data.begin() + size_written,
+                               data.begin() + size_written + BLOCK_SIZE);
+    } else {
+      buffer = std::vector<u8>(data.begin() + size_written, data.end());
+    }
+    const auto current_block_info = block_map[current_block_idx];
+    const auto &[block_id, mac_id, version] = current_block_info;
+    auto write_res = write_single_block(block_id, mac_id, version, 0, buffer);
+    if (write_res.is_err()) return ChfsNullResult(write_res.unwrap_error());
+    size_written += current_write_length;
+    current_block_idx++;
+  }
+
   return KNullOk;
-  //...if we don't need to alloc more block...//
 }
 
 // {Your code here}

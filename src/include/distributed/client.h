@@ -142,6 +142,13 @@ private:
   std::shared_ptr<RpcClient>
       metadata_server_; // Currently only one metadata server
   mac_id_t num_data_servers;
+
+    // my snippets
+    const usize BLOCK_SIZE = 4096;
+    auto read_single_block(block_id_t block_id, mac_id_t mac_id, version_t version, usize offset, usize len)
+    -> ChfsResult<std::vector<u8>>;
+    auto write_single_block(block_id_t block_id, mac_id_t mac_id, version_t version, usize offset, std::vector<u8> buffer)
+    -> ChfsNullResult;
 };
 
 } // namespace chfs
