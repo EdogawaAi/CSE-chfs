@@ -22,7 +22,7 @@
 #include "block/manager.h"
 
 namespace chfs {
-
+using BlockInfo = std::tuple<block_id_t, mac_id_t, version_t>;
 // The first block is reserved as super block
 // So block IDs should be larger than 0
 const block_id_t KInvalidBlockID = 0;
@@ -78,6 +78,7 @@ class Inode {
   friend class InodeIterator;
   friend class InodeManager;
   friend class FileOperation;
+    friend class MetadataServer;
 
   InodeType type;
   FileAttr inner_attr;
@@ -123,6 +124,11 @@ public:
    * Get the number of blocks of the inode
    */
   auto get_nblocks() const -> u32 { return nblocks; }
+
+  auto get_nblocks_metadata_server() const -> u32 {
+    return static_cast<u32>(static_cast<u64>(block_size - sizeof(Inode)) /
+                            sizeof(BlockInfo));
+  }
 
   /**
    * Get the number of direct blocks stored in this inode

@@ -2,22 +2,24 @@
 //
 //                         Chfs
 //
-// dataserver.h
+// metadata_server.h
 //
-// Identification: src/include/distributed/dataserver.h
+// Identification: src/include/distributed/metadata_server.h
 //
 //
 //===----------------------------------------------------------------------===//
 
 #pragma once
 
+#include <mutex>
+
 #include "common/config.h"
 #include "common/util.h"
+#include "distributed/commit_log.h"
+#include "filesystem/operations.h"
 #include "librpc/client.h"
 #include "librpc/server.h"
 #include "metadata/manager.h"
-#include "filesystem/operations.h"
-#include "distributed/commit_log.h"
 
 namespace chfs {
 
@@ -55,11 +57,12 @@ namespace chfs {
 const u8 RegularFileType = 1;
 const u8 DirectoryType = 2;
 
+// remember to alse update this in inode.h if it is changed in the future
 using BlockInfo = std::tuple<block_id_t, mac_id_t, version_t>;
 
 class MetadataServer {
-  const size_t num_worker_threads = 4; // worker threads for rpc handlers
-public:
+  const size_t num_worker_threads = 4;  // worker threads for rpc handlers
+ public:
   /**
    * Start a metadata server that listens on `localhost` with the given port.
    *
@@ -164,7 +167,7 @@ public:
    * A RPC handler for client. It returns the type and attribute of a file
    *
    * @param id: The inode id of the file
-   * 
+   *
    * @return: a tuple of <size, atime, mtime, ctime, type>
    */
   auto get_type_attr(inode_id_t id) -> std::tuple<u64, u64, u64, u64, u8>;
@@ -214,7 +217,7 @@ public:
     }
   }
 
-private:
+ private:
   /**
    * Helper function for binding rpc handlers
    */
@@ -227,11 +230,11 @@ private:
    */
   inline auto init_fs(const std::string &data_path);
 
-  std::unique_ptr<RpcServer> server_; // Receiving requests from the client
-  std::shared_ptr<FileOperation> operation_; // Real metadata handler
+  std::unique_ptr<RpcServer> server_;  // Receiving requests from the client
+  std::shared_ptr<FileOperation> operation_;  // Real metadata handler
   std::map<mac_id_t, std::shared_ptr<RpcClient>>
-      clients_;              // Sending requests to data server
-  mac_id_t num_data_servers; // The number of data servers
+      clients_;               // Sending requests to data server
+  mac_id_t num_data_servers;  // The number of data servers
   bool running;
   // Control which data server node allocates the new block
   RandomNumberGenerator generator;
@@ -245,6 +248,9 @@ private:
   /**
    * {You can add anything you want here}
    */
+  static constexpr usize LOCK_CNT = 64;
+  std::mutex inode_locks[LOCK_CNT];
+  std::mutex inode_table_lock;
 };
 
-} // namespace chfs
+}  // namespace chfs

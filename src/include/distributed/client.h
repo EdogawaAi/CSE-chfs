@@ -26,10 +26,9 @@ namespace chfs {
  *
  */
 class ChfsClient {
-
-public:
+ public:
   enum class ServerType { DATA_SERVER, METADATA_SERVER };
-  enum class FileType : u8 { REGULAR = 1, DIRECTORY }; // for passing param
+  enum class FileType : u8 { REGULAR = 1, DIRECTORY };  // for passing param
 
   /**
    * Constructor.
@@ -137,11 +136,18 @@ public:
   auto free_file_block(inode_id_t id, block_id_t block_id, mac_id_t mac_id)
       -> ChfsNullResult;
 
-private:
+ private:
   std::map<mac_id_t, std::shared_ptr<RpcClient>> data_servers_;
   std::shared_ptr<RpcClient>
-      metadata_server_; // Currently only one metadata server
+      metadata_server_;  // Currently only one metadata server
   mac_id_t num_data_servers;
+  const usize BLOCK_SIZE = 4096;
+  auto read_single_block(block_id_t block_id, mac_id_t mac_id,
+                         version_t version, usize offset, usize len)
+      -> ChfsResult<std::vector<u8>>;
+  auto write_single_block(block_id_t block_id, mac_id_t mac_id,
+                          version_t version, usize offset,
+                          std::vector<u8> buffer) -> ChfsNullResult;
 };
 
-} // namespace chfs
+}  // namespace chfs

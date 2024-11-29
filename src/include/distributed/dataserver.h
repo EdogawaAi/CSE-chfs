@@ -11,11 +11,12 @@
 
 #pragma once
 
+#include <mutex>
+
 #include "block/allocator.h"
 #include "common/config.h"
 #include "common/result.h"
 #include "librpc/server.h"
-#include <mutex>
 namespace chfs {
 
 /**
@@ -27,16 +28,20 @@ namespace chfs {
  * block creation and deletion from the `MetadataServer`.
  */
 class DataServer {
+ protected:
+  const size_t num_worker_threads = 4;  // worker threads for rpc handlers
 
-protected:
-  const size_t num_worker_threads = 4; // worker threads for rpc handlers
+  u32 versions_per_block;
+  u32 version_block_num;
+  auto get_block_version(block_id_t block_id) -> version_t;
+  auto update_block_version(block_id_t block_id) -> version_t;
 
   /**
    * The common logic in constructor
    */
   auto initialize(std::string const &data_path);
 
-public:
+ public:
   /**
    * Start a data server that listens on `localhost` with the given port.
    *
@@ -116,9 +121,10 @@ public:
    */
   auto free_block(block_id_t block_id) -> bool;
 
-private:
+ private:
   std::unique_ptr<RpcServer> server_;
   std::shared_ptr<BlockAllocator> block_allocator_;
+  std::mutex allocator_lock;
 };
 
-} // namespace chfs
+}  // namespace chfs

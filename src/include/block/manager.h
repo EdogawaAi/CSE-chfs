@@ -11,6 +11,8 @@
 
 #pragma once
 
+#include <memory>
+#include <mutex>
 #include <vector>
 
 #include "common/config.h"
@@ -21,6 +23,8 @@ namespace chfs {
 // TODO
 
 class BlockIterator;
+class BlockOperation;
+struct PackedLogEntry;
 
 /**
  * BlockManager implements a block device to read/write block devices
@@ -29,18 +33,26 @@ class BlockIterator;
 class BlockManager {
   friend class BlockIterator;
 
-protected:
+ protected:
   const usize block_sz = 4096;
 
   std::string file_name_;
   int fd;
   u8 *block_data;
   usize block_cnt;
-  bool in_memory; // whether we use in-memory to emulate the block manager
+  bool in_memory;  // whether we use in-memory to emulate the block manager
   bool maybe_failed;
   usize write_fail_cnt;
 
-public:
+  const usize BLOCKS_RESERVED_FOR_LOGGING = 1024;
+  const usize OFFSET_OF_LOGGING_AREA = 2 * sizeof(usize) + sizeof(txn_id_t);
+  const usize OFFSET_OF_MAX_TXN_ID = 2 * sizeof(usize);
+
+  bool log_enabled = false;
+  std::vector<std::shared_ptr<BlockOperation>> *now_logging_vec = nullptr;
+  std::mutex txn_id_mutex;
+
+ public:
   /**
    * Creates a new block manager that writes to a file-backed block device.
    * @param block_file the file name of the  file to write to
@@ -69,7 +81,7 @@ public:
   /**
    * Creates a new block manager that writes to a file-backed block device.
    * It reserves some blocks for recording logs.
-   * 
+   *
    * @param block_file the file name of the  file to write to
    * @param block_cnt the number of blocks in the device
    * @param is_log_enabled whether to enable log
@@ -111,6 +123,11 @@ public:
     return this->block_cnt * this->block_sz;
   }
 
+  auto total_storage_sz_w_log() const -> usize {
+    return (this->block_cnt + this->BLOCKS_RESERVED_FOR_LOGGING) *
+           this->block_sz;
+  }
+
   /**
    * Get the total number of blocks in the block manager
    */
@@ -139,9 +156,40 @@ public:
   /**
    * Mark the block manager as may fail state
    */
-  auto set_may_fail(bool may_fail) -> void {
-    this->maybe_failed = may_fail;
-  }
+  auto set_may_fail(bool may_fail) -> void { this->maybe_failed = may_fail; }
+
+  auto read_bytes_from_log_area(usize start_byte_idx, usize length)
+      -> std::vector<u8>;
+
+  auto write_bytes_to_log_area(usize start_byte_idx, std::vector<u8> data)
+      -> bool;
+
+  auto get_log_area_start_end_byte_idx() -> std::pair<usize, usize>;
+
+  // if some value is 0, don't update it
+  auto set_log_area_start_end_byte_idx(usize start, usize end) -> bool;
+
+  auto write_log_entry(std::vector<u8> entry_vec) -> bool;
+
+  auto get_log_entries() -> std::vector<PackedLogEntry>;
+
+  auto write_partial_block_wo_failure(block_id_t block_id, const u8 *data,
+                                      usize offset, usize len)
+      -> ChfsNullResult;
+
+  auto start_logging(std::vector<std::shared_ptr<BlockOperation>> *log_vec)
+      -> ChfsNullResult;
+
+  auto stop_logging() -> ChfsNullResult;
+
+  auto flush_ops(std::vector<std::shared_ptr<BlockOperation>> *log_vec)
+      -> ChfsNullResult;
+
+  void set_max_txn_id(txn_id_t max_txn_id);
+
+  auto increase_and_get_txn_id() -> txn_id_t;
+
+  void reset_logging_area();
 };
 
 /**
@@ -158,7 +206,7 @@ class BlockIterator {
 
   std::vector<u8> buffer;
 
-public:
+ public:
   /**
    * Creates a new block iterator.
    *
@@ -200,10 +248,11 @@ public:
     return this->buffer[this->cur_block_off % bm->block_sz];
   }
 
-  template <typename T> auto unsafe_get_value_ptr() -> T * {
+  template <typename T>
+  auto unsafe_get_value_ptr() -> T * {
     return reinterpret_cast<T *>(this->buffer.data() +
                                  this->cur_block_off % bm->block_sz);
   }
 };
 
-} // namespace chfs
+}  // namespace chfs
