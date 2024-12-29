@@ -134,6 +134,11 @@ public:
    */
   auto get_block_map(inode_id_t id) -> std::vector<BlockInfo>;
 
+  // [transaction] //
+  auto get_block_map_from_memory(inode_id_t id, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> std::vector<BlockInfo>;
+  // [transaction] //
+
+
   /**
    * A RPC handler for client. It allocate a new block for a file on data server
    * and return the logic block id & node id to client.
@@ -164,7 +169,7 @@ public:
    * A RPC handler for client. It returns the type and attribute of a file
    *
    * @param id: The inode id of the file
-   * 
+   *
    * @return: a tuple of <size, atime, mtime, ctime, type>
    */
   auto get_type_attr(inode_id_t id) -> std::tuple<u64, u64, u64, u64, u8>;
@@ -245,6 +250,7 @@ private:
   /**
    * {You can add anything you want here}
    */
+  std::mutex global_mtx;
 };
 
 } // namespace chfs
