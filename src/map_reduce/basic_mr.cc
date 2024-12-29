@@ -3,6 +3,7 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
+#include <regex>
 
 #include "map_reduce/protocol.h"
 
@@ -14,10 +15,41 @@ namespace mapReduce{
 // and look only at the contents argument. The return value is a slice
 // of key/value pairs.
 //
+    bool CharMatch(const char ch) {
+        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')) {
+            return true;
+        }
+        return false;
+    }
     std::vector<KeyVal> Map(const std::string &content) {
         // Your code goes here
         // Hints: split contents into an array of words.
         std::vector<KeyVal> ret;
+        auto punctuation_free_content = std::string();
+        punctuation_free_content.resize(content.size());
+        std::transform(content.begin(), content.end(), punctuation_free_content.begin(), [](const char ch) {
+          if (CharMatch(ch)) {
+            return ch;
+          }
+          return ' ';
+        });
+        while (!CharMatch(punctuation_free_content.back())) {
+            punctuation_free_content.pop_back();
+        }
+        // count words
+        auto ss = std::stringstream(punctuation_free_content);
+        auto word = std::string();
+        auto count_map = std::map<std::string, int>{};
+        while (!ss.eof()) {
+            ss >> word;
+            count_map[word]++;
+        }
+        // prepare return value
+
+        ret.reserve(count_map.size());
+        for (const auto &[key, count] : count_map) {
+            ret.emplace_back(key, std::to_string(count));
+        }
         return ret;
 
     }
@@ -30,7 +62,8 @@ namespace mapReduce{
     std::string Reduce(const std::string &key, const std::vector<std::string> &values) {
         // Your code goes here
         // Hints: return the number of occurrences of the word.
-        std::string ret = "0";
-        return ret;
+        return std::to_string(std::accumulate(values.begin(), values.end(), 0, [](const int acc, const std::string &val) {
+            return acc + std::stoi(val);
+        }));
     }
 }
