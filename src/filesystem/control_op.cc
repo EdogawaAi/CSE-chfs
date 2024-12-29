@@ -113,4 +113,72 @@ err_ret:
   return ChfsNullResult(error_code);
 }
 
+auto FileOperation::remove_file_atomic(inode_id_t id, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsNullResult
+{
+  auto error_code = ErrorType::DONE;
+  const auto blockSize = this->block_manager_->block_size();
+
+  std::vector<u8> inode(blockSize);
+
+  std::vector<block_id_t> freeSet;
+
+  Inode *inodePtr = reinterpret_cast<Inode *>(inode.data());
+  auto inodeResult = this->inode_manager_->read_inode_from_memory(id, inode, tx_ops);
+  if (inodeResult.is_err())
+  {
+    error_code = inodeResult.unwrap_error();
+    goto err_ret;
+  }
+
+  for (uint i = 0; i < inodePtr->get_direct_block_num(); i++)
+  {
+    if (inodePtr->blocks[i] == KInvalidBlockID)
+    {
+      break;
+    }
+    freeSet.push_back(inodePtr->blocks[i]);
+  }
+
+  if (inodePtr->blocks[inodePtr->get_direct_block_num()] != KInvalidBlockID)
+  {
+    std::vector<u8> indirect_block = {};
+    auto read_res = this->block_manager_->read_block_from_memory(inodePtr->blocks[inodePtr->get_direct_block_num()], indirect_block.data(), tx_ops);
+    if (read_res.is_err())
+    {
+      error_code = read_res.unwrap_error();
+      goto err_ret;
+    }
+
+    auto blockArray = reinterpret_cast<block_id_t *>(indirect_block.data());
+    for (uint i = 0; i < this->block_manager_->block_size() / sizeof(block_id_t); i++)
+    {
+      if (blockArray[i] == KInvalidBlockID) {
+        break;
+      } else {
+        freeSet.push_back(blockArray[i]);
+      }
+    }
+  }
+  {
+    auto result = this->inode_manager_->free_inode_atomic(id, tx_ops);
+    if (result.is_err())
+    {
+      error_code = result.unwrap_error();
+      goto err_ret;
+    }
+    freeSet.push_back(inodeResult.unwrap());
+  }
+
+  for (auto bid : freeSet)
+  {
+    auto result = this->block_allocator_->deallocate_atomic(bid, tx_ops);
+    if (result.is_err())
+    {
+      return result;
+    }
+  }
+  return KNullOk;
+  err_ret:
+    return ChfsNullResult(error_code);
+}
 } // namespace chfs
