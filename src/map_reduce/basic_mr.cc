@@ -15,43 +15,32 @@ namespace mapReduce{
 // and look only at the contents argument. The return value is a slice
 // of key/value pairs.
 //
-    bool CharMatch(const char ch) {
-        if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')) {
-            return true;
-        }
-        return false;
-    }
     std::vector<KeyVal> Map(const std::string &content) {
         // Your code goes here
         // Hints: split contents into an array of words.
-        std::vector<KeyVal> ret;
-        auto punctuation_free_content = std::string();
-        punctuation_free_content.resize(content.size());
-        std::transform(content.begin(), content.end(), punctuation_free_content.begin(), [](const char ch) {
-          if (CharMatch(ch)) {
-            return ch;
-          }
-          return ' ';
-        });
-        while (!CharMatch(punctuation_free_content.back())) {
-            punctuation_free_content.pop_back();
+        std::string curWord;
+        size_t size = content.size();
+        std::vector<KeyVal> res;
+        for (size_t pos = 0; pos < size; pos++)
+        {
+            char ch = content[pos];
+            if (isalpha(ch))
+            {
+                curWord.push_back(ch);
+            } else
+            {
+                if (curWord.size() > 0)
+                {
+                    res.push_back({curWord, "1"});
+                    curWord.clear();
+                }
+            }
         }
-        // count words
-        auto ss = std::stringstream(punctuation_free_content);
-        auto word = std::string();
-        auto count_map = std::map<std::string, int>{};
-        while (!ss.eof()) {
-            ss >> word;
-            count_map[word]++;
+        if (curWord.size() > 0)
+        {
+            res.push_back({curWord, "1"});
         }
-        // prepare return value
-
-        ret.reserve(count_map.size());
-        for (const auto &[key, count] : count_map) {
-            ret.emplace_back(key, std::to_string(count));
-        }
-        return ret;
-
+        return res;
     }
 
 //

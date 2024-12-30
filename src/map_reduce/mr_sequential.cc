@@ -13,10 +13,12 @@ namespace mapReduce {
         outPutFile = resultFile;
         // Your code goes here (optional)
         auto look_res = chfs_client->lookup(1, outPutFile);
-        if(look_res.is_err()){
+        if (look_res.is_err())
+        {
             std::cout << "Output file didn't create!" << std::endl;
             auto create_res = chfs_client->mknode(chfs::ChfsClient::FileType::REGULAR, 1, outPutFile);
-            if(create_res.is_err()){
+            if (create_res.is_err())
+            {
                 std::cout << "create failed!" << std::endl;
             }
             return;
@@ -25,12 +27,13 @@ namespace mapReduce {
 
     void SequentialMapReduce::doWork() {
         // Your code goes here
-        std::vector<KeyVal> all_map_vec;
-        all_map_vec.clear();
+        std::vector<KeyVal> all_map_vec = {};
 
-        for(auto file : files){
+        for (auto file : files)
+        {
             auto look_res = chfs_client->lookup(1, file);
-            if(look_res.is_err()){
+            if (look_res.is_err())
+            {
                 std::cout << "ERROR2" << std::endl;
                 return;
             }
@@ -46,12 +49,14 @@ namespace mapReduce {
 
         int offset = 0;
         auto out_inode = chfs_client->lookup(1, outPutFile).unwrap();
-        while(!all_map_vec.empty()){
+        while (!all_map_vec.empty())
+        {
             auto new_key = all_map_vec[0].key;
-            std::vector<std::string> key_val_vec;
-            key_val_vec.clear();
-            for(auto it = all_map_vec.begin();it != all_map_vec.end();++it){
-                if((*it).key == new_key){
+            std::vector<std::string> key_val_vec = {};
+            for (auto it = all_map_vec.begin(); it != all_map_vec.end(); it++)
+            {
+                if ((*it).key == new_key)
+                {
                     key_val_vec.push_back((*it).val);
                     all_map_vec.erase(it);
                     --it;
@@ -61,7 +66,8 @@ namespace mapReduce {
             auto write_content = new_key + " " + reduce_res + " ";
             auto write_vec = std::vector<chfs::u8>(write_content.begin(), write_content.end());
             auto write_res = chfs_client->write_file(out_inode, offset, write_vec);
-            if(write_res.is_ok()){
+            if (write_res.is_ok())
+            {
                 offset += write_vec.size();
             }
         }
