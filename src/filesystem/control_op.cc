@@ -9,33 +9,29 @@ FileOperation::FileOperation(std::shared_ptr<BlockManager> bm,
                               new InodeManager(bm, max_inode_supported))),
       block_allocator_(std::shared_ptr<BlockAllocator>(
           new BlockAllocator(bm, inode_manager_->get_reserved_blocks()))) {
-  // now initialize the superblock
   SuperBlock(bm, inode_manager_->get_max_inode_supported()).flush(0).unwrap();
 }
 
 auto FileOperation::create_from_raw(std::shared_ptr<BlockManager> bm)
     -> ChfsResult<std::shared_ptr<FileOperation>> {
-  // 1. get the metadata from the super block
-  auto superblock_res = SuperBlock::create_from_existing(bm, 0);
-  if (superblock_res.is_err()) {
-    return ChfsResult<std::shared_ptr<FileOperation>>(
-        superblock_res.unwrap_error());
+  auto superblockResult = SuperBlock::create_from_existing(bm, 0);
+  if (superblockResult.is_err())
+  {
+    return ChfsResult<std::shared_ptr<FileOperation>>(superblockResult.unwrap_error());
   }
 
-  // 2. create the innode manager
-  auto inode_manager_res = InodeManager::create_from_block_manager(
-      bm, superblock_res.unwrap()->get_ninodes());
-  if (inode_manager_res.is_err()) {
-    return ChfsResult<std::shared_ptr<FileOperation>>(
-        inode_manager_res.unwrap_error());
+  auto inodeManager = InodeManager::create_from_block_manager(bm, superblockResult.unwrap()->get_ninodes());
+  if (inodeManager.is_err())
+  {
+    return ChfsResult<std::shared_ptr<FileOperation>>(inodeManager.unwrap_error());
   }
 
-  auto reserved_block_num = inode_manager_res.unwrap().get_reserved_blocks();
-  return ChfsResult<std::shared_ptr<FileOperation>>(
-      std::shared_ptr<FileOperation>(new FileOperation(
-          bm, InodeManager::to_shared_ptr(inode_manager_res.unwrap()),
+  auto reservedBlockCnt = inodeManager.unwrap().get_reserved_blocks();
+  return ChfsResult<std::shared_ptr<FileOperation>>
+  (std::shared_ptr<FileOperation>(new FileOperation(
+          bm, InodeManager::to_shared_ptr(inodeManager.unwrap()),
           std::shared_ptr<BlockAllocator>(
-              new BlockAllocator(bm, reserved_block_num, false)))));
+              new BlockAllocator(bm, reservedBlockCnt, false)))));
 }
 
 auto FileOperation::get_free_inode_num() const -> ChfsResult<u64> {
@@ -54,58 +50,65 @@ auto FileOperation::remove_file(inode_id_t id) -> ChfsNullResult {
 
   std::vector<block_id_t> free_set;
 
-  auto inode_p = reinterpret_cast<Inode *>(inode.data());
-  auto inode_res = this->inode_manager_->read_inode(id, inode);
-  if (inode_res.is_err()) {
-    error_code = inode_res.unwrap_error();
-    // I know goto is bad, but we have no choice
+  auto inodePtr = reinterpret_cast<Inode *>(inode.data());
+  auto inodeResult = this->inode_manager_->read_inode(id, inode);
+  if (inodeResult.is_err())
+  {
+    error_code = inodeResult.unwrap_error();
     goto err_ret;
   }
 
-  for (uint i = 0; i < inode_p->get_direct_block_num(); ++i) {
-    if (inode_p->blocks[i] == KInvalidBlockID) {
+  for (uint i = 0; i < inodePtr->get_direct_block_num(); i++)
+  {
+    if (inodePtr->blocks[i] == KInvalidBlockID)
+    {
       break;
     }
-    free_set.push_back(inode_p->blocks[i]);
+    free_set.push_back(inodePtr->blocks[i]);
   }
 
-  if (inode_p->blocks[inode_p->get_direct_block_num()] != KInvalidBlockID) {
-    // we still need to release the indirect block
-    std::vector<u8> indirect_block;
-    auto read_res = this->block_manager_->read_block(
-        inode_p->blocks[inode_p->get_direct_block_num()],
-        indirect_block.data());
-    if (read_res.is_err()) {
-      error_code = read_res.unwrap_error();
+  if (inodePtr->blocks[inodePtr->get_direct_block_num()] != KInvalidBlockID)
+  {
+    std::vector<u8> indirect_block = {};
+    auto readResult = this->block_manager_->read_block(inodePtr->blocks[inodePtr->get_direct_block_num()], indirect_block.data());
+    if (readResult.is_err())
+    {
+      error_code = readResult.unwrap_error();
       goto err_ret;
     }
 
-    auto block_p = reinterpret_cast<block_id_t *>(indirect_block.data());
-    for (uint i = 0;
-         i < this->block_manager_->block_size() / sizeof(block_id_t); ++i) {
-      if (block_p[i] == KInvalidBlockID) {
+    auto blockArray = reinterpret_cast<block_id_t *>(indirect_block.data());
+    for (uint i = 0; i < this->block_manager_->block_size() / sizeof(block_id_t); i++)
+    {
+      if (blockArray[i] == KInvalidBlockID)
+      {
         break;
-      } else {
-        free_set.push_back(block_p[i]);
+      }
+      else
+      {
+        free_set.push_back(blockArray[i]);
       }
     }
   }
 
-  // First we free the inode
+
   {
-    auto res = this->inode_manager_->free_inode(id);
-    if (res.is_err()) {
-      error_code = res.unwrap_error();
+    auto result = this->inode_manager_->free_inode(id);
+    if (result.is_err())
+    {
+      error_code = result.unwrap_error();
       goto err_ret;
     }
-    free_set.push_back(inode_res.unwrap());
+    free_set.push_back(inodeResult.unwrap());
   }
 
   // now free the blocks
-  for (auto bid : free_set) {
-    auto res = this->block_allocator_->deallocate(bid);
-    if (res.is_err()) {
-      return res;
+  for (auto bid : free_set)
+  {
+    auto result = this->block_allocator_->deallocate(bid);
+    if (result.is_err())
+    {
+      return result;
     }
   }
   return KNullOk;
