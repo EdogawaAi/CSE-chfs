@@ -42,8 +42,16 @@ auto append_to_directory(std::string src, std::string filename, inode_id_t id)
 
   // TODO: Implement this function.
   //       Append the new directory entry to `src`.
-  UNIMPLEMENTED();
-  
+  // UNIMPLEMENTED();
+  std::ostringstream oss;
+
+  if (!src.empty())
+  {
+    oss << '/';
+  }
+
+  oss << filename << ':' << id;
+  src.append(oss.str());
   return src;
 }
 
@@ -51,7 +59,22 @@ auto append_to_directory(std::string src, std::string filename, inode_id_t id)
 void parse_directory(std::string &src, std::list<DirectoryEntry> &list) {
 
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+  //UNIMPLEMENTED();
+  list.clear();
+  std::istringstream iss(src);
+  std::string token;
+  while (getline(iss, token, '/'))
+  {
+    std::istringstream tokenStream(token);
+    DirectoryEntry dir;
+    if (getline(tokenStream, dir.name, ':') && tokenStream >> dir.id)
+    {
+      list.push_back(dir);
+    } else
+    {
+      std::cerr << "Error parsing directory entry: " << src << std::endl;
+    }
+  }
 
 }
 
@@ -62,8 +85,22 @@ auto rm_from_directory(std::string src, std::string filename) -> std::string {
 
   // TODO: Implement this function.
   //       Remove the directory entry from `src`.
-  UNIMPLEMENTED();
-
+  // UNIMPLEMENTED();
+  std::list<DirectoryEntry> rawList;
+  parse_directory(src, rawList);
+  auto iter = rawList.begin();
+  while (iter != rawList.end())
+  {
+    if ((*iter).name == filename)
+    {
+      auto nextIter = ++iter;
+      rawList.erase(--iter);
+      iter = nextIter;
+      continue;
+    }
+    iter++;
+  }
+  res = dir_list_to_string(rawList);
   return res;
 }
 
@@ -74,8 +111,10 @@ auto read_directory(FileOperation *fs, inode_id_t id,
                     std::list<DirectoryEntry> &list) -> ChfsNullResult {
   
   // TODO: Implement this function.
-  UNIMPLEMENTED();
-
+  // UNIMPLEMENTED();
+  std::vector<u8> directories = (fs->read_file(id)).unwrap();
+  std::string dirString = std::string(directories.begin(), directories.end());
+  parse_directory(dirString, list);
   return KNullOk;
 }
 
