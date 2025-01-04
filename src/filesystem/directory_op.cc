@@ -109,7 +109,7 @@ auto rm_from_directory(std::string src, std::string filename) -> std::string {
  */
 auto read_directory(FileOperation *fs, inode_id_t id,
                     std::list<DirectoryEntry> &list) -> ChfsNullResult {
-  
+
   // TODO: Implement this function.
   // UNIMPLEMENTED();
   std::vector<u8> directories = (fs->read_file(id)).unwrap();
@@ -124,7 +124,16 @@ auto FileOperation::lookup(inode_id_t id, const char *name)
   std::list<DirectoryEntry> list;
 
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+  // UNIMPLEMENTED();
+  std::string filename_str(name);
+  read_directory(this, id, list);
+  for (const auto &entry : list)
+  {
+    if (entry.name == filename_str)
+    {
+      return ChfsResult<inode_id_t>(entry.id);
+    }
+  }
 
   return ChfsResult<inode_id_t>(ErrorType::NotExist);
 }
@@ -138,9 +147,23 @@ auto FileOperation::mk_helper(inode_id_t id, const char *name, InodeType type)
   //    If already exist, return ErrorType::AlreadyExist.
   // 2. Create the new inode.
   // 3. Append the new entry to the parent directory.
-  UNIMPLEMENTED();
+  // UNIMPLEMENTED();
+  std::list<DirectoryEntry> list;
+  if ((this->lookup(id, name)).is_ok())
+  {
+    return ChfsResult<inode_id_t>(ErrorType::AlreadyExist);
+  }
+  std::string filename(name);
+  inode_id_t allocate_inode_id = (this->alloc_inode(type)).unwrap();
+  read_directory(this, id, list);
+  DirectoryEntry new_entry = {filename, allocate_inode_id};
+  list.push_back(new_entry);
 
-  return ChfsResult<inode_id_t>(static_cast<inode_id_t>(0));
+  std::string new_dir_string = dir_list_to_string(list);
+  std::vector<u8> new_dir_vec(new_dir_string.begin(), new_dir_string.end());
+  this->write_file(id, new_dir_vec);
+
+  return ChfsResult<inode_id_t>(allocate_inode_id);
 }
 
 // {Your code here}
@@ -150,8 +173,17 @@ auto FileOperation::unlink(inode_id_t parent, const char *name)
   // TODO: 
   // 1. Remove the file, you can use the function `remove_file`
   // 2. Remove the entry from the directory.
-  UNIMPLEMENTED();
-  
+  // UNIMPLEMENTED();
+  inode_id_t remove_file_inode_id = (this->lookup(parent, name)).unwrap();
+  this->remove_file(remove_file_inode_id);
+
+  std::string name_str(name);
+  std::vector<u8> parent_content = (this->read_file(parent)).unwrap();
+  std::string parent_content_str(reinterpret_cast<char *>(parent_content.data()), parent_content.size());
+  std::string parent_content_str_change = rm_from_directory(parent_content_str, name_str);
+  std::vector<u8> new_dir_vec(parent_content_str_change.begin(), parent_content_str_change.end());
+  this->write_file(parent, new_dir_vec);
+
   return KNullOk;
 }
 
