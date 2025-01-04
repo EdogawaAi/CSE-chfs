@@ -76,7 +76,16 @@ auto BlockManager::write_block(block_id_t block_id, const u8 *data)
     -> ChfsNullResult {
   
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+  // UNIMPLEMENTED();
+  if (block_id >= block_cnt)
+  {
+    return ChfsNullResult(ErrorType::INVALID_ARG);
+  }
+
+  for (usize i = 0; i < block_sz; i++)
+  {
+    block_data[i + block_id * block_sz] = data[i];
+  }
 
   return KNullOk;
 }
@@ -86,7 +95,16 @@ auto BlockManager::write_partial_block(block_id_t block_id, const u8 *data,
     -> ChfsNullResult {
   
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+  // UNIMPLEMENTED();
+  if (block_id >= block_cnt || offset + len > block_sz)
+  {
+    return ChfsNullResult(ErrorType::INVALID_ARG);
+  }
+
+  for (usize i = 0; i < len; i++)
+  {
+    block_data[i + offset + block_id * block_sz] = data[i];
+  }
 
   return KNullOk;
 }
@@ -94,7 +112,16 @@ auto BlockManager::write_partial_block(block_id_t block_id, const u8 *data,
 auto BlockManager::read_block(block_id_t block_id, u8 *data) -> ChfsNullResult {
 
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+  // UNIMPLEMENTED();
+  if (block_id >= block_cnt)
+  {
+    return ChfsNullResult(ErrorType::INVALID_ARG);
+  }
+
+  for (usize i = 0; i < block_sz; i++)
+  {
+    data[i] = block_data[i + block_id * block_sz];
+  }
 
   return KNullOk;
 }
@@ -102,7 +129,16 @@ auto BlockManager::read_block(block_id_t block_id, u8 *data) -> ChfsNullResult {
 auto BlockManager::zero_block(block_id_t block_id) -> ChfsNullResult {
   
   // TODO: Implement this function.
-  UNIMPLEMENTED();
+  // UNIMPLEMENTED();
+  if (block_id >= block_cnt)
+  {
+    return ChfsNullResult(ErrorType::INVALID_ARG);
+  }
+
+  for (usize i = 0; i < block_sz; i++)
+  {
+    block_data[i + block_id * block_sz] = 0;
+  }
 
   return KNullOk;
 }
