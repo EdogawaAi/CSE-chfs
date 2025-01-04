@@ -155,11 +155,11 @@ auto BlockAllocator::deallocate(block_id_t block_id) -> ChfsNullResult {
   // 1. According to `block_id`, zero the bit in the bitmap.
   const auto total_bits_per_block = this->bm->block_size() * KBitsPerByte;
   auto block_idx = block_id % total_bits_per_block;
-  auto bitmap_block_idx = block_id / total_bits_per_block + this->bitmap_block_id;
+  auto bitmap_block_idx = block_id / total_bits_per_block;
 
   std::vector<u8> buffer(bm->block_size());
 
-  bm->read_block(bitmap_block_idx, buffer.data());
+  bm->read_block(bitmap_block_idx + bitmap_block_id, buffer.data());
   auto bitmap = Bitmap(buffer.data(), bm->block_size());
 
   // 2. Flush the changed bitmap block back to the block manager.
@@ -168,8 +168,8 @@ auto BlockAllocator::deallocate(block_id_t block_id) -> ChfsNullResult {
     return ChfsNullResult(ErrorType::INVALID_ARG);
   }
 
-  bitmap.clear(bitmap_block_idx);
-  bm->write_block(bitmap_block_idx, buffer.data());
+  bitmap.clear(block_idx);
+  bm->write_block(bitmap_block_idx + bitmap_block_id, buffer.data());
 
   return KNullOk;
 }
