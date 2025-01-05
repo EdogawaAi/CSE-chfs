@@ -134,6 +134,8 @@ public:
    */
   auto get_block_map(inode_id_t id) -> std::vector<BlockInfo>;
 
+  auto get_block_map_from_memory(inode_id_t id, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> std::vector<BlockInfo>;
+
   /**
    * A RPC handler for client. It allocate a new block for a file on data server
    * and return the logic block id & node id to client.
@@ -245,6 +247,7 @@ private:
   /**
    * {You can add anything you want here}
    */
+  std::mutex mutex;
 };
 
 } // namespace chfs
