@@ -17,9 +17,29 @@ namespace mapReduce{
     std::vector<KeyVal> Map(const std::string &content) {
         // Your code goes here
         // Hints: split contents into an array of words.
-        std::vector<KeyVal> ret;
-        return ret;
-
+        std::string curWord;
+        size_t size = content.size();
+        std::vector<KeyVal> res;
+        for (size_t pos = 0; pos < size; pos++)
+        {
+            char ch = content[pos];
+            if (isalpha(ch))
+            {
+                curWord.push_back(ch);
+            } else
+            {
+                if (curWord.size() > 0)
+                {
+                    res.push_back({curWord, "1"});
+                    curWord.clear();
+                }
+            }
+        }
+        if (curWord.size() > 0)
+        {
+            res.push_back({curWord, "1"});
+        }
+        return res;
     }
 
 //
@@ -30,7 +50,8 @@ namespace mapReduce{
     std::string Reduce(const std::string &key, const std::vector<std::string> &values) {
         // Your code goes here
         // Hints: return the number of occurrences of the word.
-        std::string ret = "0";
-        return ret;
+        return std::to_string(std::accumulate(values.begin(), values.end(), 0, [](const int acc, const std::string &val) ->int {
+            return acc + std::stoi(val);
+        }));
     }
 }
