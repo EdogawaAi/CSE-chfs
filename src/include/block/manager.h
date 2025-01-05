@@ -12,7 +12,7 @@
 #pragma once
 
 #include <vector>
-
+#include <memory>
 #include "common/config.h"
 #include "common/macros.h"
 #include "common/result.h"
@@ -21,7 +21,7 @@ namespace chfs {
 // TODO
 
 class BlockIterator;
-
+class BlockOperation;
 /**
  * BlockManager implements a block device to read/write block devices
  * Note that the block manager is **not** thread-safe.
@@ -39,6 +39,7 @@ protected:
   bool in_memory; // whether we use in-memory to emulate the block manager
   bool maybe_failed;
   usize write_fail_cnt;
+  bool is_log_enabled;
 
 public:
   /**
@@ -87,6 +88,22 @@ public:
   virtual auto write_block(block_id_t block_id, const u8 *block_data)
       -> ChfsNullResult;
 
+  virtual auto write_block_to_memory(block_id_t block_id, const u8 *block_data, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsNullResult;
+
+  virtual auto read_block_from_memory(block_id_t block_id, u8 *block_data, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsNullResult;
+
+  virtual auto write_log_entry(usize offset, const u8 *data, usize len) -> ChfsNullResult;
+
+  virtual auto write_block_for_recover(block_id_t block_id, const u8 *block_data) -> ChfsNullResult;
+
+  virtual auto get_log_start() -> u8 * {
+    return this->block_data + ((this->block_cnt - 1024) * this->block_sz);
+  }
+
+  virtual auto get_log_end() -> u8 * {
+    return this->block_data + this->block_cnt * this->block_sz;
+  }
+
   /**
    * Write a partial block to the internal block device.
    */
@@ -114,7 +131,10 @@ public:
   /**
    * Get the total number of blocks in the block manager
    */
-  auto total_blocks() const -> usize { return this->block_cnt; }
+  auto total_blocks() const -> usize
+  {
+    return (is_log_enabled ? this->block_cnt - 1024 : this->block_cnt);
+  }
 
   /**
    * Get the block size of the device managed by the manager
@@ -194,6 +214,11 @@ public:
     auto target_block_id =
         this->start_block_id + this->cur_block_off / bm->block_sz;
     return this->bm->write_block(target_block_id, this->buffer.data());
+  }
+
+  auto flush_cur_block_atomic(std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsNullResult {
+    auto target_block_id = this->start_block_id + this->cur_block_off / this->bm->block_size();
+    return this->bm->write_block_to_memory(target_block_id, this->buffer.data(), tx_ops);
   }
 
   auto get_cur_byte() const -> u8 {

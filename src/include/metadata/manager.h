@@ -73,6 +73,18 @@ public:
    */
   auto allocate_inode(InodeType type, block_id_t bid) -> ChfsResult<inode_id_t>;
 
+  auto allocate_inode_atomic(InodeType type, block_id_t bid, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsResult<inode_id_t>;
+
+  auto free_inode_atomic(inode_id_t id, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsNullResult;
+
+  auto set_table_atomic(inode_id_t idx, block_id_t bid, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsNullResult;
+
+  auto get_from_memory(inode_id_t id, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsResult<block_id_t>;
+
+  auto read_inode_from_memory(inode_id_t id, std::vector<u8> &buffer, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsResult<block_id_t>;
+
+  auto get_type_from_memory(inode_id_t id, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsResult<InodeType>;
+
   /**
    * Get the number of free inodes
    * @return the number of free inodes if Ok

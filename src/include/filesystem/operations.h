@@ -186,6 +186,22 @@ public:
    */
   auto unlink(inode_id_t parent, const char *name) -> ChfsNullResult;
 
+  auto mknode_atomic(inode_id_t parent, const char *name, InodeType type, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsResult<inode_id_t>;
+
+  auto alloc_inode_atomic(InodeType type, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsResult<inode_id_t>;
+
+  auto write_file_atomic(inode_id_t id, const std::vector<u8> &content, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsNullResult;
+
+  auto unlink_atomic(inode_id_t parent, const char *name, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsNullResult;
+
+  auto remove_file_atomic(inode_id_t id, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsNullResult;
+
+  auto lookup_from_memory(inode_id_t id, const char *name, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsResult<inode_id_t>;
+
+  auto read_file_from_memory(inode_id_t id, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsResult<std::vector<u8>>;
+
+  auto gettype_from_memory(inode_id_t id, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsResult<InodeType>;
+
 private:
   FileOperation(std::shared_ptr<BlockManager> bm,
                 std::shared_ptr<InodeManager> im,

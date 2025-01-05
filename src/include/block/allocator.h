@@ -95,6 +95,10 @@ public:
    *         other error code if there is other error.
    */
   auto deallocate(block_id_t block_id) -> ChfsNullResult;
+
+  auto allocate_atomic(std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsResult<block_id_t>;
+
+  auto deallocate_atomic(block_id_t block_id, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsNullResult;
 };
 
 } // namespace chfs
