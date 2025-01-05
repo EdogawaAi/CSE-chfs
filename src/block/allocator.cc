@@ -174,4 +174,60 @@ auto BlockAllocator::deallocate(block_id_t block_id) -> ChfsNullResult {
   return KNullOk;
 }
 
+auto BlockAllocator::allocate_atomic(std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsResult<block_id_t> {
+  std::vector<u8> buffer(this->bm->block_size());
+
+  for (uint i = 0; i < this->bitmap_block_cnt; i++) {
+    this->bm->read_block_from_memory(i + this->bitmap_block_id, buffer.data(), tx_ops);
+
+    std::optional<block_id_t> res = std::nullopt;
+
+    if (i == this->bitmap_block_cnt - 1) {
+      auto res_tmp = Bitmap(buffer.data(), this->bm->block_size()).find_first_free_w_bound(this->last_block_num);
+      if (res_tmp.has_value()) {
+        res = res_tmp.value();
+      }
+    } else {
+      auto res_tmp = Bitmap(buffer.data(), this->bm->block_size()).find_first_free();
+      if (res_tmp.has_value()) {
+        res = res_tmp.value();
+      }
+    }
+
+    if (res) {
+      block_id_t retval = static_cast<block_id_t>(0);
+
+      Bitmap(buffer.data(), this->bm->block_size()).set(res.value());
+      this->bm->write_block_to_memory(i + this->bitmap_block_id, buffer.data(), tx_ops);
+      retval = i * this->bm->block_size() * KBitsPerByte + res.value();
+
+      return ChfsResult<block_id_t>(retval);
+    }
+  }
+  return ChfsResult<block_id_t>(ErrorType::OUT_OF_RESOURCE);
+}
+
+auto BlockAllocator::deallocate_atomic(block_id_t block_id, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsNullResult {
+  if (block_id >= this->bm->total_blocks()) {
+    return ChfsNullResult(ErrorType::INVALID_ARG);
+  }
+
+  const auto total_bits_per_block = this->bm->block_size() * KBitsPerByte;
+  auto bitmap_block_id_global = block_id / total_bits_per_block + this->bitmap_block_id;
+  auto bitmap_block_idx = block_id % total_bits_per_block;
+
+  std::vector<u8> buffer(this->bm->block_size());
+  this->bm->read_block_from_memory(bitmap_block_id_global, buffer.data(), tx_ops).unwrap();
+  auto bitmap = Bitmap(buffer.data(), this->bm->block_size());
+
+  if (!bitmap.check(bitmap_block_idx)) {
+    return ChfsNullResult(ErrorType::INVALID_ARG);
+  }
+
+  bitmap.clear(bitmap_block_idx);
+  this->bm->write_block_to_memory(bitmap_block_id_global, buffer.data(), tx_ops);
+
+  return KNullOk;
+}
+
 } // namespace chfs

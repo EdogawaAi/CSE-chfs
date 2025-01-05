@@ -171,6 +171,8 @@ public:
   auto write_indirect_block(std::shared_ptr<BlockManager> &bm,
                             std::vector<u8> &buffer) -> ChfsNullResult;
 
+  auto write_indirect_block_atomic(std::shared_ptr<BlockManager> &bm, std::vector<u8> &buffer, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsNullResult;
+
   /**
    * Set the direct block ID given an index
    */
@@ -213,6 +215,18 @@ public:
     return ChfsResult<block_id_t>(this->blocks[this->nblocks - 1]);
   }
 
+  auto get_or_insert_indirect_block_log(std::shared_ptr<BlockAllocator> &allocator, std::vector<std::shared_ptr<BlockOperation>> &tx_ops) -> ChfsResult<block_id_t> {
+    if (this->blocks[this->nblocks - 1] == KInvalidBlockID) {
+      auto bid = allocator->allocate_atomic(tx_ops);
+      if (bid.is_err()) {
+        return ChfsResult<block_id_t>(bid.unwrap_error());
+      }
+      this->blocks[this->nblocks - 1] = bid.unwrap();
+    }
+    return ChfsResult<block_id_t>(this->blocks[this->nblocks - 1]);
+  }
+
+
   auto get_indirect_block_id() -> block_id_t {
     CHFS_ASSERT(this->blocks[this->nblocks - 1] != KInvalidBlockID,
                 "Indirect block not set");
@@ -221,6 +235,10 @@ public:
 
   auto invalid_indirect_block_id() {
     this->blocks[this->nblocks - 1] = KInvalidBlockID;
+  }
+
+  auto set_size(u64 size) {
+    this->inner_attr.size = size;
   }
 
   auto begin() -> InodeIterator;
